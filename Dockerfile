@@ -1,0 +1,28 @@
+FROM golang:1.27 AS builder
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+# COPY config.yaml ./
+COPY . .
+
+RUN CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=arm64 \
+    go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /kcert-checker \
+    ./cmd/kcert-checker
+
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=builder /kcert-checker /kcert-checker
+# COPY --from=builder /src/config.yaml /config.yaml
+
+USER nonroot:nonroot
+
+ENTRYPOINT ["/kcert-checker"]

@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────
+# Go build output
+# ─────────────────────────────────────────────
+/bin
+*.exe
+*.test
+*.out
+
+# ─────────────────────────────────────────────
+# Archives / tarballs
+# ─────────────────────────────────────────────
+*.tar
+*.tar.gz
+*.zip
+
+# ─────────────────────────────────────────────
+# Private keys and certificates
+# ─────────────────────────────────────────────
+*.key
+*.pem
+# Allow .crt files committed intentionally (e.g. test fixtures) by default,
+# but exclude any that appear to be real/private material if you prefer:
+# *.crt
+
+# ─────────────────────────────────────────────
+# Kubeconfig / credentials
+# ─────────────────────────────────────────────
+kubeconfig
+*.kubeconfig
+.kube/
+
+# ─────────────────────────────────────────────
+# Helm chart lock & dependency cache
+# ─────────────────────────────────────────────
+helm/*/charts/
+helm/*/Chart.lock
+
+# ─────────────────────────────────────────────
+# Prometheus values snapshots (contain cluster-specific config)
+# ─────────────────────────────────────────────
+_prometheus-values.yaml
+
+# ─────────────────────────────────────────────
+# Runtime / scan output files
+# ─────────────────────────────────────────────
+*.txt
+!README*.txt
+
+# ─────────────────────────────────────────────
+# Editor and OS noise
+# ─────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

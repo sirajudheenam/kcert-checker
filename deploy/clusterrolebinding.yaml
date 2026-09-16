@@ -1,0 +1,14 @@
+# Binds the kcert-checker ClusterRole to the kcert-checker ServiceAccount
+# in the monitoring namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kcert-checker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kcert-checker
+subjects:
+  - kind: ServiceAccount
+    name: kcert-checker
+    namespace: monitoring

@@ -1,0 +1,100 @@
+# Integration test fixtures — ConfigMap + Pod.
+#
+# The expired cert is embedded as a pre-generated PEM in a ConfigMap so its
+# NotAfter is guaranteed to be in the past regardless of OpenSSL version or flags.
+# The other certs (critical/warning/healthy) are generated at runtime by the
+# init container using standard openssl req -x509 -days N which is reliable.
+#
+# Status coverage:
+#   expired-container   -> pre-baked cert (NotAfter 2 days ago) -> StatusExpired
+#   critical-container  -> 4-day cert                           -> StatusCritical
+#   warning-container   -> 20-day cert                          -> StatusWarning
+#   healthy-container   -> 180-day cert                         -> StatusOK
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kcert-expired-cert
+  namespace: kcert-integration
+data:
+  server.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBJzCBzaADAgECAgEBMAoGCCqGSM49BAMCMB0xGzAZBgNVBAMTEmV4cGlyZWQu
+    a2NlcnQudGVzdDAeFw0yNjA5MDUxNjQ1MDhaFw0yNjA5MTMxNjQ1MDhaMB0xGzAZ
+    BgNVBAMTEmV4cGlyZWQua2NlcnQudGVzdDBZMBMGByqGSM49AgEGCCqGSM49AwEH
+    A0IABH1+c657d+Dud0vuHmvCn5/rWml/pPqH11asG0AZlQRphagXCLuUQzdFMQUO
+    RXV3TwQ0lah2r94SW6dBcGgjfggwCgYIKoZIzj0EAwIDSQAwRgIhAPpUu3FwGiij
+    r8GezmwMui9FrCpMkaHpKstaqIubTzO1AiEAiI0pFxh/1ukxe8eU2u+US36j6OVI
+    ZwQE8OSb6/c97jo=
+    -----END CERTIFICATE-----
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kcert-fixture
+  namespace: kcert-integration
+  labels:
+    app: kcert-fixture
+spec:
+  restartPolicy: Always
+  initContainers:
+    - name: cert-generator
+      image: alpine:3.22
+      command:
+        - /bin/sh
+        - -c
+        - |
+          apk add --no-cache openssl 2>/dev/null
+
+          gen() {
+            local path="$1" cn="$2" days="$3"
+            mkdir -p "$(dirname "$path")"
+            openssl req -x509 -nodes -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+              -days "$days" -keyout "${path%.crt}.key" -out "$path" \
+              -subj "/CN=$cn" 2>/dev/null
+          }
+
+          gen /vol/critical/tls.crt  "critical.kcert.test"  4
+          gen /vol/warning/tls.crt   "warning.kcert.test"   20
+          gen /vol/healthy/tls.crt   "healthy.kcert.test"   180
+
+          echo "Certificates generated."
+      volumeMounts:
+        - {name: vol-critical, mountPath: /vol/critical}
+        - {name: vol-warning,  mountPath: /vol/warning}
+        - {name: vol-healthy,  mountPath: /vol/healthy}
+
+  containers:
+    - name: expired-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - name: vol-expired
+          mountPath: /etc/certs
+          readOnly: true
+
+    - name: critical-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - {name: vol-critical, mountPath: /etc/tls, readOnly: true}
+
+    - name: warning-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - {name: vol-warning, mountPath: /etc/tls, readOnly: true}
+
+    - name: healthy-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - {name: vol-healthy, mountPath: /etc/tls, readOnly: true}
+
+  volumes:
+    - name: vol-expired
+      configMap:
+        name: kcert-expired-cert
+    - {name: vol-critical, emptyDir: {}}
+    - {name: vol-warning,  emptyDir: {}}
+    - {name: vol-healthy,  emptyDir: {}}

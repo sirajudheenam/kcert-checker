@@ -1,0 +1,60 @@
+# ConfigMap holding the kcert-checker config file.
+# Mounted read-only into the Pod at /etc/kcert-checker/config.yaml.
+# Edit scanner.certificates.paths to add new cert paths to scan.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kcert-checker-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    kubernetes:
+      # in-cluster: reads the ServiceAccount token mounted by Kubernetes automatically.
+      mode: "in-cluster"
+
+    scanner:
+      namespaces:
+        exclude:
+          # Uncomment to skip system namespaces:
+          # - kube-system
+          # - kube-public
+          # - kube-node-lease
+
+      containers:
+        include_init_containers: false
+        exclude:
+          - istio-proxy
+          - linkerd-proxy
+
+      pods:
+        exclude:
+          - "debug-*"
+          - "test-*"
+
+      secrets:
+        exclude:
+          - "sh.helm.release.*"
+
+      certificates:
+        # Paths checked inside every running container via pod/exec cat.
+        # Missing paths are silently skipped.
+        paths:
+          - /etc/ssl/postfix/tls.crt
+          - /etc/ssl/postfix/ca.crt
+          - /etc/tls/tls.crt
+          - /etc/tls/ca.crt
+          - /etc/certs/tls.crt
+          - /etc/certs/server.crt
+          - /etc/certs/ca.crt
+          - /var/run/secrets/tls/tls.crt
+          - /var/run/secrets/tls/ca.crt
+
+    metrics:
+      enabled: true
+      listen_address: "0.0.0.0:8080"
+      path: "/metrics"
+
+    scan:
+      interval_seconds: 3600
+      warning_days: 30
+      critical_days: 7

@@ -1,0 +1,154 @@
+# Deployment for kcert-checker.
+# Runs a single replica that scans all namespaces on startup and every interval_seconds.
+# Known issues fixed vs. original manifest (see COMMANDS.md):
+#   - runAsUser: 65532 required because Kubernetes rejects non-numeric USER names
+#     when runAsNonRoot is true
+#   - mountPath changed from /etc/kcert to /etc/kcert-checker to match --config arg
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kcert-checker
+  namespace: monitoring
+  labels:
+    app: kcert-checker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kcert-checker
+  template:
+    metadata:
+      labels:
+        app: kcert-checker
+    spec:
+      serviceAccountName: kcert-checker
+      containers:
+        - name: kcert-checker
+          image: kcert-checker:local # sirajudheenam/kcert-checker:local-arm64
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config=/etc/kcert-checker/config.yaml"
+          ports:
+            # All HTTP endpoints share port 8080: /metrics, /healthz, /readyz,
+            # /ui (embedded dashboard), /api/certificates (JSON data for Next.js UI).
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          # /healthz returns 200 immediately (process alive).
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            failureThreshold: 3
+          # /readyz returns 200 only after the first scan completes.
+          # Kubernetes holds traffic until the scanner has real data to serve.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kcert-checker
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532  # distroless nonroot UID; numeric required with runAsNonRoot
+      volumes:
+        - name: config
+          configMap:
+            name: kcert-checker-config
+---
+# Deployment for the kcert-checker Next.js UI.
+# This is a separate process that runs `next start` and proxies /api/* to the
+# Go backend (kcert-checker:8080). Set NEXT_PUBLIC_API_URL to the in-cluster
+# backend service URL so rewrites in next.config.ts resolve correctly.
+# Build the image with:  docker build -t kcert-checker-ui:local ./ui
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kcert-checker-ui
+  namespace: monitoring
+  labels:
+    app: kcert-checker-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kcert-checker-ui
+  template:
+    metadata:
+      labels:
+        app: kcert-checker-ui
+    spec:
+      containers:
+        - name: kcert-checker-ui
+          # Build from ui/ directory: docker build -t kcert-checker-ui:local ./ui
+          image: kcert-checker-ui:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            # Points the Next.js rewrite proxy at the Go backend in-cluster.
+            # next.config.ts rewrites /api/* → ${NEXT_PUBLIC_API_URL}/api/*
+            - name: NEXT_PUBLIC_API_URL
+              value: "http://kcert-checker.monitoring.svc.cluster.local:8080"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1001  # next.js docker image default non-root UID
+---
+# Service for the Next.js UI.
+# Port-forward to access locally:
+#   kubectl port-forward svc/kcert-checker-ui 3000:3000 -n monitoring
+apiVersion: v1
+kind: Service
+metadata:
+  name: kcert-checker-ui
+  namespace: monitoring
+  labels:
+    app: kcert-checker-ui
+spec:
+  selector:
+    app: kcert-checker-ui
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+      protocol: TCP

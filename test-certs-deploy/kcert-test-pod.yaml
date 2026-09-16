@@ -1,0 +1,217 @@
+# Test pod that exercises every kcert-checker alert tier.
+# Each container generates certificates at one or more of the configured
+# scanner paths, each with a different expiry to trigger a different alert rule.
+#
+# Alert coverage:
+#   expired-container   → KCertCertificateExpired             (cert backdated to Sep 1-2)
+#   critical-container  → KCertCertificateExpiresWithin7Days  (-days 5)
+#   warn30-container    → KCertCertificateExpiresWithin30Days (-days 20)
+#   warn60-container    → KCertCertificateExpiresWithin60Days (-days 45)
+#   warn90-container    → KCertCertificateExpiresWithin90Days (-days 75)
+#   healthy180-container → NO alert (180 days > 90-day threshold)
+#   healthy365-container → NO alert (365 days > 90-day threshold)
+#
+# The expired cert uses -days 1 with a startdate set to 2 days ago so it is
+# already past its NotAfter when the scanner reads it.
+#
+# All cert paths used here are in the default scanner.certificates.paths list
+# in kcert-checker-config so no ConfigMap changes are needed.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kcert-test
+  namespace: monitoring
+  labels:
+    app: kcert-test
+  annotations:
+    sidecar.istio.io/inject: "false"
+
+spec:
+  # initContainer generates all certs into shared emptyDir volumes before
+  # any app container starts, so the certs are present when kcert-checker
+  # execs into each container.
+  initContainers:
+    - name: cert-generator
+      image: alpine:3.22
+      command:
+        - /bin/sh
+        - -c
+        - |
+          apk add --no-cache openssl
+
+          # ── Helper: generate a self-signed cert at a given path ───────
+          gen() {
+            local path="$1" cn="$2" days="$3"
+            mkdir -p "$(dirname "$path")"
+            openssl req -x509 -nodes -newkey rsa:2048 \
+              -days "$days" \
+              -keyout "${path%.crt}.key" \
+              -out "$path" \
+              -subj "/CN=$cn" \
+              2>/dev/null
+            echo "Generated $path (CN=$cn, days=$days):"
+            openssl x509 -in "$path" -noout -subject -dates
+          }
+
+          # ── EXPIRED: create a 1-day cert then wind its dates back ────────
+          # We generate a normal cert, then use openssl to re-sign it with
+          # dates shifted 10 days into the past so NotAfter < now.
+          mkdir -p /certs/expired
+          # Generate a CA key+cert valid for 1 day (will be the expired cert)
+          openssl req -x509 -nodes -newkey rsa:2048 \
+            -days 1 \
+            -keyout /certs/expired/server.key \
+            -out /certs/expired/server.crt \
+            -subj "/CN=expired-cert" \
+            2>/dev/null
+          # Re-sign with past dates using a fresh CSR
+          openssl req -new -key /certs/expired/server.key \
+            -subj "/CN=expired-cert" -out /tmp/expired.csr 2>/dev/null
+          # Use -startdate / -enddate to backdate (supported in OpenSSL 1.1+)
+          openssl x509 -req -in /tmp/expired.csr \
+            -signkey /certs/expired/server.key \
+            -out /certs/expired/server.crt \
+            -days 1 \
+            -startdate 20260901000000Z \
+            -enddate   20260902000000Z \
+            2>/dev/null || \
+          echo "WARNING: Could not backdate cert — it will expire in 1 day, not already expired"
+          echo "Expired cert:"
+          openssl x509 -in /certs/expired/server.crt -noout -subject -dates
+
+          # ── 7-DAY: triggers KCertCertificateExpiresWithin7Days ────────
+          gen /certs/critical/server.crt  "critical-7d"  5
+          gen /certs/critical/ca.crt      "critical-ca"  5
+
+          # ── 30-DAY: triggers KCertCertificateExpiresWithin30Days ──────
+          gen /certs/warn30/tls.crt  "warn-30d"  20
+          gen /certs/warn30/ca.crt   "warn-30d-ca" 20
+
+          # ── 60-DAY: triggers KCertCertificateExpiresWithin60Days ──────
+          gen /certs/warn60/tls.crt  "warn-60d"  45
+
+          # ── 90-DAY: triggers KCertCertificateExpiresWithin90Days ──────
+          gen /certs/warn90/tls.crt  "warn-90d"  75
+          gen /certs/warn90/ca.crt   "warn-90d-ca" 75
+
+          # ── 180-DAY: no alert (> 90-day threshold) ─────────────────────
+          gen /certs/healthy180/tls.crt  "healthy-180d"     180
+          gen /certs/healthy180/ca.crt   "healthy-180d-ca"  180
+
+          # ── 365-DAY: no alert (> 90-day threshold) ─────────────────────
+          gen /certs/healthy365/tls.crt  "healthy-365d"     365
+          gen /certs/healthy365/ca.crt   "healthy-365d-ca"  365
+
+          echo "All certificates generated."
+
+      volumeMounts:
+        - name: certs-expired
+          mountPath: /certs/expired
+        - name: certs-critical
+          mountPath: /certs/critical
+        - name: certs-warn30
+          mountPath: /certs/warn30
+        - name: certs-warn60
+          mountPath: /certs/warn60
+        - name: certs-warn90
+          mountPath: /certs/warn90
+        - name: certs-healthy180
+          mountPath: /certs/healthy180
+        - name: certs-healthy365
+          mountPath: /certs/healthy365
+
+  containers:
+    # ── Container 1: EXPIRED cert ─────────────────────────────────────────
+    # Expected alert: KCertCertificateExpired (critical)
+    # Path scanned:   /etc/certs/server.crt
+    - name: expired-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - name: certs-expired
+          mountPath: /etc/certs
+          readOnly: true
+
+    # ── Container 2: 5-day cert ───────────────────────────────────────────
+    # Expected alert: KCertCertificateExpiresWithin7Days (critical)
+    # Paths scanned:  /etc/certs/server.crt, /etc/certs/ca.crt
+    - name: critical-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - name: certs-critical
+          mountPath: /etc/certs
+          readOnly: true
+
+    # ── Container 3: 20-day cert ──────────────────────────────────────────
+    # Expected alert: KCertCertificateExpiresWithin30Days (warning)
+    # Paths scanned:  /etc/tls/tls.crt, /etc/tls/ca.crt
+    - name: warn30-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - name: certs-warn30
+          mountPath: /etc/tls
+          readOnly: true
+
+    # ── Container 4: 45-day cert ──────────────────────────────────────────
+    # Expected alert: KCertCertificateExpiresWithin60Days (warning)
+    # Path scanned:   /var/run/secrets/tls/tls.crt
+    - name: warn60-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - name: certs-warn60
+          mountPath: /var/run/secrets/tls
+          readOnly: true
+
+    # ── Container 5: 75-day cert ──────────────────────────────────────────
+    # Expected alert: KCertCertificateExpiresWithin90Days (warning)
+    # Paths scanned:  /var/run/secrets/tls/tls.crt, /var/run/secrets/tls/ca.crt
+    - name: warn90-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - name: certs-warn90
+          mountPath: /var/run/secrets/tls
+          readOnly: true
+
+    # ── Container 6: 180-day cert ─────────────────────────────────────────
+    # Expected alert: NONE (180 days is above the 90-day alert threshold)
+    # Paths scanned:  /etc/ssl/postfix/tls.crt, /etc/ssl/postfix/ca.crt
+    - name: healthy180-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - name: certs-healthy180
+          mountPath: /etc/ssl/postfix
+          readOnly: true
+
+    # ── Container 7: 365-day cert ─────────────────────────────────────────
+    # Expected alert: NONE (365 days is above the 90-day alert threshold)
+    # Paths scanned:  /etc/ssl/postfix/tls.crt, /etc/ssl/postfix/ca.crt
+    # (same paths as healthy180 but in a separate container to confirm
+    #  per-container metric labelling works correctly)
+    - name: healthy365-container
+      image: alpine:3.22
+      command: [sleep, infinity]
+      volumeMounts:
+        - name: certs-healthy365
+          mountPath: /etc/ssl/postfix
+          readOnly: true
+
+  volumes:
+    - name: certs-expired
+      emptyDir: {}
+    - name: certs-critical
+      emptyDir: {}
+    - name: certs-warn30
+      emptyDir: {}
+    - name: certs-warn60
+      emptyDir: {}
+    - name: certs-warn90
+      emptyDir: {}
+    - name: certs-healthy180
+      emptyDir: {}
+    - name: certs-healthy365
+      emptyDir: {}

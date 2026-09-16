@@ -1,0 +1,17 @@
+{{- /* ClusterIP Service exposing the metrics port. Prometheus discovers it via endpointslice SD. */ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kcert-checker.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kcert-checker.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "kcert-checker.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: {{ .Values.service.port }}
+      targetPort: metrics
+      protocol: TCP

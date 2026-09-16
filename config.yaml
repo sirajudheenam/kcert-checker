@@ -1,0 +1,53 @@
+kubernetes:
+  mode: "kubeconfig"
+  kubeconfig: "/Users/sam/.kube/config"
+  context: "kind-cka"
+
+scanner:
+  namespaces:
+    exclude:
+      # - kube-system
+      # - kube-public
+      # - kube-node-lease
+      # - "openshift-*"
+
+  certificates:
+    paths:
+      - "/etc/ssl/postfix/tls.crt"
+      - "/etc/ssl/postfix/ca.crt"
+      - "/etc/ssl/certs/tls.crt"
+      - "/etc/tls/tls.crt"
+      - "/etc/tls/ca.crt"
+      - "/etc/certs/tls.crt"
+      - "/etc/certs/server.crt"
+      - "/etc/certs/ca.crt"
+      - "/tls/tls.crt"
+      - "/tls/server.crt"
+      - "/var/run/secrets/tls/tls.crt"
+      - "/var/run/secrets/tls/ca.crt"
+
+  containers:
+    include_init_containers: false
+    exclude:
+      - istio-proxy
+      - linkerd-proxy
+      - "init-*"
+
+  pods:
+    exclude:
+      - "debug-*"
+      - "test-*"
+
+  secrets:
+    exclude:
+      - "sh.helm.release.*"
+
+metrics:
+  enabled: true
+  listen_address: "0.0.0.0:8080"
+  path: "/metrics"
+
+scan:
+  interval_seconds: 3600  # 3600 = 1 hour; 86400 = 24 hours
+  warning_days: 30
+  critical_days: 7

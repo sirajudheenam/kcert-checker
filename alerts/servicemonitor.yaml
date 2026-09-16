@@ -1,0 +1,19 @@
+# ServiceMonitor for the Prometheus Operator (kube-prometheus-stack).
+# Use this instead of prometheus-kcert-values.yaml if your cluster runs
+# the Prometheus Operator rather than the standalone prometheus Helm chart.
+# Requires the monitoring.coreos.com/v1 CRD to be installed.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kcert-checker
+  namespace: monitoring
+
+spec:
+  selector:
+    matchLabels:
+      app: kcert-checker
+
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

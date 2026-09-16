@@ -1,0 +1,143 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kcert-checker-certificate-alerts
+  namespace: monitoring
+
+spec:
+  groups:
+    - name: kcert-checker-certificates
+
+      rules:
+        # --------------------------------------------------
+        # EXPIRED
+        # --------------------------------------------------
+
+        - alert: KubernetesCertificateExpired
+
+          expr: |
+            kubernetes_certificate_expiry_seconds <= 0
+
+          for: 5m
+
+          labels:
+            severity: critical
+            certificate_expiry_window: expired
+
+          annotations:
+            summary: "Kubernetes certificate has expired"
+
+            description: >-
+              Certificate {{ $labels.path }}
+              in namespace {{ $labels.namespace }},
+              pod {{ $labels.pod }},
+              container {{ $labels.container }}
+              has expired.
+
+        # --------------------------------------------------
+        # 7 DAYS
+        # --------------------------------------------------
+
+        - alert: KubernetesCertificateExpiresWithin7Days
+
+          expr: |
+            kubernetes_certificate_expiry_seconds > 0
+            and
+            kubernetes_certificate_expiry_seconds <= 7 * 24 * 60 * 60
+
+          for: 15m
+
+          labels:
+            severity: critical
+            certificate_expiry_window: 7d
+
+          annotations:
+            summary: "Certificate expires within 7 days"
+
+            description: >-
+              Certificate {{ $labels.path }}
+              in namespace {{ $labels.namespace }},
+              pod {{ $labels.pod }},
+              container {{ $labels.container }}
+              expires in {{ humanizeDuration $value }}.
+
+        # --------------------------------------------------
+        # 30 DAYS
+        # --------------------------------------------------
+
+        - alert: KubernetesCertificateExpiresWithin30Days
+
+          expr: |
+            kubernetes_certificate_expiry_seconds > 7 * 24 * 60 * 60
+            and
+            kubernetes_certificate_expiry_seconds <= 30 * 24 * 60 * 60
+
+          for: 30m
+
+          labels:
+            severity: critical
+            certificate_expiry_window: 30d
+
+          annotations:
+            summary: "Certificate expires within 30 days"
+
+            description: >-
+              Certificate {{ $labels.path }}
+              in namespace {{ $labels.namespace }},
+              pod {{ $labels.pod }},
+              container {{ $labels.container }}
+              expires in {{ humanizeDuration $value }}.
+
+        # --------------------------------------------------
+        # 60 DAYS
+        # --------------------------------------------------
+
+        - alert: KubernetesCertificateExpiresWithin60Days
+
+          expr: |
+            kubernetes_certificate_expiry_seconds > 30 * 24 * 60 * 60
+            and
+            kubernetes_certificate_expiry_seconds <= 60 * 24 * 60 * 60
+
+          for: 30m
+
+          labels:
+            severity: warning
+            certificate_expiry_window: 60d
+
+          annotations:
+            summary: "Certificate expires within 60 days"
+
+            description: >-
+              Certificate {{ $labels.path }}
+              in namespace {{ $labels.namespace }},
+              pod {{ $labels.pod }},
+              container {{ $labels.container }}
+              expires in {{ humanizeDuration $value }}.
+
+        # --------------------------------------------------
+        # 90 DAYS
+        # --------------------------------------------------
+
+        - alert: KubernetesCertificateExpiresWithin90Days
+
+          expr: |
+            kubernetes_certificate_expiry_seconds > 60 * 24 * 60 * 60
+            and
+            kubernetes_certificate_expiry_seconds <= 90 * 24 * 60 * 60
+
+          for: 30m
+
+          labels:
+            severity: warning
+            certificate_expiry_window: 90d
+
+          annotations:
+            summary: "Certificate expires within 90 days"
+
+            description: >-
+              Certificate {{ $labels.path }}
+              in namespace {{ $labels.namespace }},
+              pod {{ $labels.pod }},
+              container {{ $labels.container }}
+              expires in {{ humanizeDuration $value }}.

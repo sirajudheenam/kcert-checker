@@ -1,0 +1,8 @@
+# Chart metadata for the kcert-checker Helm chart.
+# Converted from the flat deploy/ manifests. See COMMANDS.md for install instructions.
+apiVersion: v2
+name: kcert-checker
+description: Kubernetes certificate expiry checker with Prometheus metrics
+type: application
+version: 0.1.0
+appVersion: "latest"

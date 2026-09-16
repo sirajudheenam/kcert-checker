@@ -1,0 +1,24 @@
+# Service for kcert-checker Go backend.
+# Port 8080 serves: /metrics (Prometheus), /healthz, /readyz, /ui, /api/certificates.
+# Prometheus discovers this via the endpointslice SD job in prometheus-kcert-values.yaml.
+# To access manually:
+#   kubectl port-forward svc/kcert-checker 8080:8080 -n monitoring
+#   curl http://localhost:8080/metrics
+#   curl http://localhost:8080/healthz
+#   curl http://localhost:8080/api/certificates
+apiVersion: v1
+kind: Service
+metadata:
+  name: kcert-checker
+  namespace: monitoring
+  labels:
+    app: kcert-checker
+spec:
+  selector:
+    app: kcert-checker
+  ports:
+    # metrics — scraped by Prometheus; also hosts /ui and /api/certificates
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+      protocol: TCP

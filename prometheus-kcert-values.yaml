@@ -1,0 +1,82 @@
+extraScrapeConfigs: |
+  - job_name: kcert-checker
+    kubernetes_sd_configs:
+      - role: endpointslice
+
+    relabel_configs:
+      - action: keep
+        source_labels:
+          - __meta_kubernetes_namespace
+          - __meta_kubernetes_endpointslice_label_kubernetes_io_service_name
+        regex: monitoring;kcert-checker
+
+      - action: keep
+        source_labels:
+          - __meta_kubernetes_endpointslice_port_name
+        regex: metrics
+
+    scrape_interval: 1m
+    scrape_timeout: 10s
+
+serverFiles:
+  alerting_rules.yml:
+    groups:
+      - name: kcert-certificate-expiry
+        rules:
+          - alert: KCertCertificateExpired
+            expr: |
+              kcert_certificate_expiry_timestamp_seconds - time() <= 0
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Certificate has expired"
+              description: "Certificate in namespace {{ $labels.namespace }}, pod {{ $labels.pod }}, container {{ $labels.container }}, path {{ $labels.path }} has expired."
+
+          - alert: KCertCertificateExpiresWithin7Days
+            expr: |
+              kcert_certificate_expiry_timestamp_seconds - time() > 0
+              and
+              kcert_certificate_expiry_timestamp_seconds - time() <= 7 * 24 * 60 * 60
+            for: 10m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Certificate expires within 7 days"
+              description: "Certificate in namespace {{ $labels.namespace }}, pod {{ $labels.pod }}, container {{ $labels.container }}, path {{ $labels.path }} expires within 7 days."
+
+          - alert: KCertCertificateExpiresWithin30Days
+            expr: |
+              kcert_certificate_expiry_timestamp_seconds - time() > 7 * 24 * 60 * 60
+              and
+              kcert_certificate_expiry_timestamp_seconds - time() <= 30 * 24 * 60 * 60
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Certificate expires within 30 days"
+              description: "Certificate in namespace {{ $labels.namespace }}, pod {{ $labels.pod }}, container {{ $labels.container }}, path {{ $labels.path }} expires within 30 days."
+
+          - alert: KCertCertificateExpiresWithin60Days
+            expr: |
+              kcert_certificate_expiry_timestamp_seconds - time() > 30 * 24 * 60 * 60
+              and
+              kcert_certificate_expiry_timestamp_seconds - time() <= 60 * 24 * 60 * 60
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Certificate expires within 60 days"
+              description: "Certificate in namespace {{ $labels.namespace }}, pod {{ $labels.pod }}, container {{ $labels.container }}, path {{ $labels.path }} expires within 60 days."
+
+          - alert: KCertCertificateExpiresWithin90Days
+            expr: |
+              kcert_certificate_expiry_timestamp_seconds - time() > 60 * 24 * 60 * 60
+              and
+              kcert_certificate_expiry_timestamp_seconds - time() <= 90 * 24 * 60 * 60
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Certificate expires within 90 days"
+              description: "Certificate in namespace {{ $labels.namespace }}, pod {{ $labels.pod }}, container {{ $labels.container }}, path {{ $labels.path }} expires within 90 days."

@@ -1,0 +1,42 @@
+{{- /* Deployment running one kcert-checker replica. Scans on startup then every interval_hours hours. */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kcert-checker.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kcert-checker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kcert-checker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "kcert-checker.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "kcert-checker.serviceAccountName" . }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "--config=/etc/kcert-checker/config.yaml"
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          volumeMounts:
+            # Mount the ConfigMap at the path expected by --config.
+            - name: config
+              mountPath: /etc/kcert-checker
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kcert-checker.fullname" . }}-config

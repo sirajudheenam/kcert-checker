@@ -1,0 +1,32 @@
+{{- /* ConfigMap holding config.yaml, mounted read-only at /etc/kcert-checker/ in the Pod. */ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kcert-checker.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kcert-checker.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    kubernetes:
+      mode: {{ .Values.config.kubernetes.mode | quote }}
+
+    scanner:
+      namespaces: {{ .Values.config.scanner.namespaces }}
+
+      containers:
+        include_init_containers: {{ .Values.config.scanner.containers.include_init_containers }}
+
+      certificates:
+        paths:
+          {{- range .Values.config.scanner.certificates.paths }}
+          - {{ . }}
+          {{- end }}
+
+    metrics:
+      enabled: {{ .Values.config.metrics.enabled }}
+      listen_address: {{ .Values.config.metrics.listen_address | quote }}
+      path: {{ .Values.config.metrics.path | quote }}
+
+    scan:
+      interval_seconds: {{ .Values.config.scan.interval_seconds }}

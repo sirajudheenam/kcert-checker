@@ -1,0 +1,82 @@
+# Default values for kcert-checker.
+# Override with --set or -f <file> on helm install/upgrade.
+
+replicaCount: 1
+
+image:
+  repository: sirajudheenam/kcert-checker
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# nameOverride / fullnameOverride change the chart name used in resource names.
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # create: true provisions a dedicated ServiceAccount.
+  # Set to false to use an existing one and set name below.
+  create: true
+  name: ""
+
+rbac:
+  # create: true provisions the ClusterRole and ClusterRoleBinding.
+  # Set to false if you manage RBAC externally.
+  create: true
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# securityContext applies to the kcert-checker container.
+# runAsUser: 65532 is required — Kubernetes rejects non-numeric usernames
+# (e.g. "nonroot") when runAsNonRoot is true.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+
+# config is rendered into the ConfigMap mounted at /etc/kcert-checker/config.yaml.
+config:
+  kubernetes:
+    mode: "auto"
+  scanner:
+    namespaces: all
+    containers:
+      include_init_containers: false
+    certificates:
+      # Paths checked inside every running container via pod/exec `cat`.
+      # Missing paths are silently skipped — most containers won't have most paths.
+      paths:
+        - /etc/ssl/postfix/tls.crt
+        - /etc/ssl/postfix/ca.crt
+        - /etc/tls/tls.crt
+        - /etc/tls/ca.crt
+        - /etc/certs/tls.crt
+        - /etc/certs/server.crt
+        - /etc/certs/ca.crt
+        - /var/run/secrets/tls/tls.crt
+        - /var/run/secrets/tls/ca.crt
+  metrics:
+    enabled: true
+    listen_address: "0.0.0.0:8080"
+    path: "/metrics"
+  scan:
+    # interval_seconds key maps to the interval_hours Go field — unit is HOURS.
+    interval_seconds: 24
+
+# serviceMonitor provisions a ServiceMonitor for the Prometheus Operator.
+# Only enable if monitoring.coreos.com/v1 CRD is present (kube-prometheus-stack).
+# For the standalone prometheus Helm chart, use prometheus-kcert-values.yaml instead.
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  path: /metrics

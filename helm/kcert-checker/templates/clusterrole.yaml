@@ -1,0 +1,26 @@
+{{- /* ClusterRole granting kcert-checker the minimum permissions it needs. Skipped if rbac.create is false. */ -}}
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kcert-checker.fullname" . }}
+  labels:
+    {{- include "kcert-checker.labels" . | nindent 4 }}
+rules:
+  # Read namespaces to discover all namespaces to scan.
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list]
+  # Read pods to discover containers in each namespace.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  # Exec into containers to run `cat <cert-path>`.
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  # Read Secrets to find certificates stored as Secret data.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list]
+{{- end }}

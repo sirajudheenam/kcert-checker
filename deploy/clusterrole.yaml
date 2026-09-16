@@ -1,0 +1,42 @@
+# ClusterRole grants kcert-checker the minimum permissions it needs cluster-wide.
+# Bound to the kcert-checker ServiceAccount via ClusterRoleBinding.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kcert-checker
+rules:
+  # Discover namespaces
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - get
+      - list
+
+  # Discover Pods
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+
+  # Execute commands inside containers
+  # Required to run `cat <cert-path>` via the pod/exec subresource.
+  - apiGroups:
+      - ""
+    resources:
+      - pods/exec
+    verbs:
+      - create
+
+  # Read Kubernetes Secrets for certificate scanning
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list

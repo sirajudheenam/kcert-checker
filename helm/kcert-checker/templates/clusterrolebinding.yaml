@@ -1,0 +1,17 @@
+{{- /* Binds the ClusterRole to the kcert-checker ServiceAccount. Skipped if rbac.create is false. */ -}}
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kcert-checker.fullname" . }}
+  labels:
+    {{- include "kcert-checker.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kcert-checker.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kcert-checker.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

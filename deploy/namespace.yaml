@@ -1,0 +1,6 @@
+# Namespace that contains all kcert-checker resources and the monitoring stack.
+# Apply once before any other manifests in this directory.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring

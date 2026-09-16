@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kcert — Certificate Inventory</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --ok: #22c55e;
+    --warning: #f59e0b;
+    --critical: #ef4444;
+    --expired: #7c3aed;
+    --ok-bg: rgba(34,197,94,0.12);
+    --warning-bg: rgba(245,158,11,0.12);
+    --critical-bg: rgba(239,68,68,0.12);
+    --expired-bg: rgba(124,58,237,0.12);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
+  header h1 span { color: var(--ok); }
+  .cluster-badge {
+    font-size: 0.75rem;
+    color: var(--muted);
+    background: var(--border);
+    padding: 4px 10px;
+    border-radius: 9999px;
+  }
+  main { padding: 24px 28px; max-width: 1400px; margin: 0 auto; }
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+  }
+  .card .label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 6px; }
+  .card .value { font-size: 2rem; font-weight: 700; line-height: 1; }
+  .card.ok     .value { color: var(--ok); }
+  .card.warning .value { color: var(--warning); }
+  .card.critical .value { color: var(--critical); }
+  .card.expired .value { color: var(--expired); }
+  .controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .controls input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 12px;
+    border-radius: 7px;
+    font-size: 0.875rem;
+    flex: 1;
+    min-width: 200px;
+    outline: none;
+  }
+  .controls input:focus { border-color: var(--ok); }
+  .controls select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 12px;
+    border-radius: 7px;
+    font-size: 0.875rem;
+    outline: none;
+    cursor: pointer;
+  }
+  .refresh-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 14px;
+    border-radius: 7px;
+    font-size: 0.875rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .refresh-btn:hover { border-color: var(--ok); color: var(--ok); }
+  .last-scan { font-size: 0.75rem; color: var(--muted); margin-left: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    font-size: 0.875rem;
+  }
+  thead tr { border-bottom: 1px solid var(--border); }
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  th:hover { color: var(--text); }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  td { padding: 10px 14px; vertical-align: middle; }
+  .badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .badge.OK       { color: var(--ok);       background: var(--ok-bg); }
+  .badge.WARNING  { color: var(--warning);   background: var(--warning-bg); }
+  .badge.CRITICAL { color: var(--critical);  background: var(--critical-bg); }
+  .badge.EXPIRED  { color: var(--expired);   background: var(--expired-bg); }
+  .days { font-variant-numeric: tabular-nums; }
+  .days.expired  { color: var(--expired); }
+  .days.critical { color: var(--critical); }
+  .days.warning  { color: var(--warning); }
+  .days.ok       { color: var(--ok); }
+  .mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.78rem; color: var(--muted); }
+  .empty { text-align: center; padding: 60px 20px; color: var(--muted); font-size: 0.95rem; }
+  .spinner { display: none; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--ok); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading .spinner { display: inline-block; }
+  #error-banner { display: none; background: var(--critical-bg); border: 1px solid var(--critical); color: var(--critical); padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.875rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>k<span>cert</span> — Certificate Inventory</h1>
+  <span class="cluster-badge" id="cluster-label">loading...</span>
+</header>
+<main>
+  <div class="summary">
+    <div class="card"><div class="label">Total</div><div class="value" id="cnt-total">—</div></div>
+    <div class="card ok"><div class="label">Healthy</div><div class="value" id="cnt-ok">—</div></div>
+    <div class="card warning"><div class="label">Warning</div><div class="value" id="cnt-warning">—</div></div>
+    <div class="card critical"><div class="label">Critical</div><div class="value" id="cnt-critical">—</div></div>
+    <div class="card expired"><div class="label">Expired</div><div class="value" id="cnt-expired">—</div></div>
+  </div>
+
+  <div id="error-banner"></div>
+
+  <div class="controls">
+    <input id="search" placeholder="Filter by namespace, subject, source..." oninput="renderTable()">
+    <select id="status-filter" onchange="renderTable()">
+      <option value="">All statuses</option>
+      <option value="OK">Healthy</option>
+      <option value="WARNING">Warning</option>
+      <option value="CRITICAL">Critical</option>
+      <option value="EXPIRED">Expired</option>
+    </select>
+    <button class="refresh-btn" onclick="load()">
+      <span class="spinner" id="spinner"></span> Refresh
+    </button>
+    <span class="last-scan" id="last-scan"></span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th onclick="sortBy('status')">Status</th>
+        <th onclick="sortBy('namespace')">Namespace</th>
+        <th onclick="sortBy('source_type')">Source</th>
+        <th onclick="sortBy('source_name')">Source Name</th>
+        <th onclick="sortBy('subject')">Subject</th>
+        <th onclick="sortBy('not_after')">Expires</th>
+        <th onclick="sortBy('days_left')">Days Left</th>
+        <th>Fingerprint</th>
+      </tr>
+    </thead>
+    <tbody id="table-body"></tbody>
+  </table>
+</main>
+
+<script>
+let allCerts = [];
+let sortKey = 'days_left';
+let sortAsc = true;
+
+function statusClass(status) {
+  return status === 'OK' ? 'ok' : status === 'WARNING' ? 'warning' : status === 'CRITICAL' ? 'critical' : 'expired';
+}
+
+function daysClass(days) {
+  if (days < 0) return 'expired';
+  if (days <= 7) return 'critical';
+  if (days <= 30) return 'warning';
+  return 'ok';
+}
+
+function renderTable() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const sf = document.getElementById('status-filter').value;
+
+  let rows = allCerts.filter(c => {
+    if (sf && c.status !== sf) return false;
+    if (q) {
+      const hay = (c.namespace + c.source_type + c.source_name + c.subject + c.issuer).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  rows.sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    if (av < bv) return sortAsc ? -1 : 1;
+    if (av > bv) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  const tbody = document.getElementById('table-body');
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty">No certificates match the current filter.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(c => {
+    const fp = c.fingerprint ? c.fingerprint.slice(0, 16) + '...' : '—';
+    const dc = daysClass(c.days_left);
+    const daysLabel = c.days_left < 0 ? `${Math.abs(c.days_left)}d ago` : `${c.days_left}d`;
+    return `<tr>
+      <td><span class="badge ${c.status}">${c.status}</span></td>
+      <td>${esc(c.namespace)}</td>
+      <td>${esc(c.source_type)}</td>
+      <td>${esc(c.source_name)}</td>
+      <td>${esc(c.subject)}</td>
+      <td class="mono">${esc(c.not_after)}</td>
+      <td class="days ${dc}">${daysLabel}</td>
+      <td class="mono" title="${esc(c.fingerprint)}">${fp}</td>
+    </tr>`;
+  }).join('');
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function sortBy(key) {
+  if (sortKey === key) sortAsc = !sortAsc;
+  else { sortKey = key; sortAsc = true; }
+  renderTable();
+}
+
+async function load() {
+  document.getElementById('spinner').style.display = 'inline-block';
+  document.getElementById('error-banner').style.display = 'none';
+  try {
+    const resp = await fetch('/api/certificates');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    allCerts = data || [];
+
+    const counts = { OK: 0, WARNING: 0, CRITICAL: 0, EXPIRED: 0 };
+    allCerts.forEach(c => { if (counts[c.status] !== undefined) counts[c.status]++; });
+    document.getElementById('cnt-total').textContent   = allCerts.length;
+    document.getElementById('cnt-ok').textContent      = counts.OK;
+    document.getElementById('cnt-warning').textContent = counts.WARNING;
+    document.getElementById('cnt-critical').textContent= counts.CRITICAL;
+    document.getElementById('cnt-expired').textContent = counts.EXPIRED;
+    document.getElementById('last-scan').textContent   = 'Updated ' + new Date().toLocaleTimeString();
+    document.getElementById('cluster-label').textContent = 'cluster: live';
+
+    renderTable();
+  } catch(e) {
+    const b = document.getElementById('error-banner');
+    b.textContent = 'Failed to load certificate data: ' + e.message;
+    b.style.display = 'block';
+  } finally {
+    document.getElementById('spinner').style.display = 'none';
+  }
+}
+
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
