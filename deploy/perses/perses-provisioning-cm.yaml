@@ -1,0 +1,295 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: perses-provisioning
+  namespace: monitoring
+data:
+  # ── Prometheus datasource ──────────────────────────────────────────────────
+  # Perses provisioning file format: one resource per file (JSON or YAML).
+  # https://perses.dev/perses/docs/configuration/provisioning/
+  datasource-prometheus.json: |
+    {
+      "kind": "GlobalDatasource",
+      "metadata": {
+        "name": "prometheus"
+      },
+      "spec": {
+        "default": true,
+        "plugin": {
+          "kind": "PrometheusDatasource",
+          "spec": {
+            "directUrl": "http://prometheus-server.monitoring.svc.cluster.local"
+          }
+        }
+      }
+    }
+
+  # ── kcert-checker dashboard ────────────────────────────────────────────────
+  dashboard-kcert.json: |
+    {
+      "kind": "Dashboard",
+      "metadata": {
+        "name": "kcert-checker",
+        "project": "default"
+      },
+      "spec": {
+        "display": {
+          "name": "kcert-checker — Certificate Expiry"
+        },
+        "duration": "1h",
+        "refreshInterval": "1m",
+        "variables": [],
+        "layouts": [
+          {
+            "kind": "Grid",
+            "spec": {
+              "display": { "title": "Summary", "collapse": { "open": true } },
+              "items": [
+                { "x": 0,  "y": 0, "width": 4, "height": 4, "content": { "$ref": "#/spec/panels/total" } },
+                { "x": 4,  "y": 0, "width": 4, "height": 4, "content": { "$ref": "#/spec/panels/expired" } },
+                { "x": 8,  "y": 0, "width": 4, "height": 4, "content": { "$ref": "#/spec/panels/critical" } },
+                { "x": 12, "y": 0, "width": 4, "height": 4, "content": { "$ref": "#/spec/panels/warning" } },
+                { "x": 16, "y": 0, "width": 4, "height": 4, "content": { "$ref": "#/spec/panels/scan_errors" } },
+                { "x": 20, "y": 0, "width": 4, "height": 4, "content": { "$ref": "#/spec/panels/scan_age" } }
+              ]
+            }
+          },
+          {
+            "kind": "Grid",
+            "spec": {
+              "display": { "title": "Certificate Details", "collapse": { "open": true } },
+              "items": [
+                { "x": 0, "y": 0, "width": 24, "height": 10, "content": { "$ref": "#/spec/panels/cert_table" } }
+              ]
+            }
+          },
+          {
+            "kind": "Grid",
+            "spec": {
+              "display": { "title": "Scanner Health", "collapse": { "open": true } },
+              "items": [
+                { "x": 0,  "y": 0, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/scan_duration" } },
+                { "x": 12, "y": 0, "width": 12, "height": 6, "content": { "$ref": "#/spec/panels/cert_counts" } }
+              ]
+            }
+          }
+        ],
+        "panels": {
+          "total": {
+            "kind": "Panel",
+            "spec": {
+              "display": { "name": "Total Certificates" },
+              "plugin": {
+                "kind": "StatChart",
+                "spec": {
+                  "calculation": "last",
+                  "format": { "unit": "decimal", "decimalPlaces": 0 },
+                  "thresholds": {
+                    "steps": [{ "color": "#73BF69", "value": null }]
+                  }
+                }
+              },
+              "queries": [{ "kind": "TimeSeriesQuery", "spec": {
+                "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "kcert_certificates_total"
+                }}
+              }}]
+            }
+          },
+          "expired": {
+            "kind": "Panel",
+            "spec": {
+              "display": { "name": "Expired" },
+              "plugin": {
+                "kind": "StatChart",
+                "spec": {
+                  "calculation": "last",
+                  "format": { "unit": "decimal", "decimalPlaces": 0 },
+                  "thresholds": {
+                    "defaultColor": "#73BF69",
+                    "steps": [
+                      { "color": "#73BF69", "value": null },
+                      { "color": "#F2495C", "value": 1 }
+                    ]
+                  }
+                }
+              },
+              "queries": [{ "kind": "TimeSeriesQuery", "spec": {
+                "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "kcert_certificates_expired_total"
+                }}
+              }}]
+            }
+          },
+          "critical": {
+            "kind": "Panel",
+            "spec": {
+              "display": { "name": "Expiring ≤ 7 days" },
+              "plugin": {
+                "kind": "StatChart",
+                "spec": {
+                  "calculation": "last",
+                  "format": { "unit": "decimal", "decimalPlaces": 0 },
+                  "thresholds": {
+                    "steps": [
+                      { "color": "#73BF69", "value": null },
+                      { "color": "#FF9830", "value": 1 }
+                    ]
+                  }
+                }
+              },
+              "queries": [{ "kind": "TimeSeriesQuery", "spec": {
+                "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "count(((kcert_certificate_expiry_timestamp_seconds - time()) / 86400) < 7 and ((kcert_certificate_expiry_timestamp_seconds - time()) / 86400) >= 0) or vector(0)"
+                }}
+              }}]
+            }
+          },
+          "warning": {
+            "kind": "Panel",
+            "spec": {
+              "display": { "name": "Expiring ≤ 30 days" },
+              "plugin": {
+                "kind": "StatChart",
+                "spec": {
+                  "calculation": "last",
+                  "format": { "unit": "decimal", "decimalPlaces": 0 },
+                  "thresholds": {
+                    "steps": [
+                      { "color": "#73BF69", "value": null },
+                      { "color": "#FADE2A", "value": 1 }
+                    ]
+                  }
+                }
+              },
+              "queries": [{ "kind": "TimeSeriesQuery", "spec": {
+                "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "count(((kcert_certificate_expiry_timestamp_seconds - time()) / 86400) < 30 and ((kcert_certificate_expiry_timestamp_seconds - time()) / 86400) >= 7) or vector(0)"
+                }}
+              }}]
+            }
+          },
+          "scan_errors": {
+            "kind": "Panel",
+            "spec": {
+              "display": { "name": "Scan Errors" },
+              "plugin": {
+                "kind": "StatChart",
+                "spec": {
+                  "calculation": "last",
+                  "format": { "unit": "decimal", "decimalPlaces": 0 },
+                  "thresholds": {
+                    "steps": [
+                      { "color": "#73BF69", "value": null },
+                      { "color": "#F2495C", "value": 1 }
+                    ]
+                  }
+                }
+              },
+              "queries": [{ "kind": "TimeSeriesQuery", "spec": {
+                "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "kcert_scan_errors_total"
+                }}
+              }}]
+            }
+          },
+          "scan_age": {
+            "kind": "Panel",
+            "spec": {
+              "display": { "name": "Time Since Last Scan" },
+              "plugin": {
+                "kind": "StatChart",
+                "spec": {
+                  "calculation": "last",
+                  "format": { "unit": "seconds" },
+                  "thresholds": {
+                    "steps": [
+                      { "color": "#73BF69", "value": null },
+                      { "color": "#FADE2A", "value": 7200 },
+                      { "color": "#F2495C", "value": 86400 }
+                    ]
+                  }
+                }
+              },
+              "queries": [{ "kind": "TimeSeriesQuery", "spec": {
+                "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "time() - kcert_scan_timestamp_seconds"
+                }}
+              }}]
+            }
+          },
+          "cert_table": {
+            "kind": "Panel",
+            "spec": {
+              "display": { "name": "Certificate Expiry — All" },
+              "plugin": {
+                "kind": "Table",
+                "spec": {
+                  "columnSettings": [
+                    { "name": "namespace",           "header": "Namespace" },
+                    { "name": "source_type",         "header": "Type" },
+                    { "name": "source_name",         "header": "Source" },
+                    { "name": "subject_common_name", "header": "Subject CN" },
+                    { "name": "issuer_common_name",  "header": "Issuer CN" },
+                    { "name": "value",               "header": "Days Left", "cellSettings": {
+                      "thresholds": {
+                        "steps": [
+                          { "color": "#F2495C", "value": null },
+                          { "color": "#FF9830", "value": 0 },
+                          { "color": "#FADE2A", "value": 7 },
+                          { "color": "#73BF69", "value": 30 }
+                        ]
+                      }
+                    }}
+                  ]
+                }
+              },
+              "queries": [{ "kind": "TimeSeriesQuery", "spec": {
+                "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "(kcert_certificate_expiry_timestamp_seconds - time()) / 86400"
+                }}
+              }}]
+            }
+          },
+          "scan_duration": {
+            "kind": "Panel",
+            "spec": {
+              "display": { "name": "Scan Duration" },
+              "plugin": {
+                "kind": "TimeSeriesChart",
+                "spec": {
+                  "yAxis": { "format": { "unit": "seconds" } }
+                }
+              },
+              "queries": [
+                { "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "histogram_quantile(0.99, rate(kcert_scan_duration_seconds_bucket[5m]))",
+                  "seriesNameFormat": "p99"
+                }}}},
+                { "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "histogram_quantile(0.50, rate(kcert_scan_duration_seconds_bucket[5m]))",
+                  "seriesNameFormat": "p50"
+                }}}}
+              ]
+            }
+          },
+          "cert_counts": {
+            "kind": "Panel",
+            "spec": {
+              "display": { "name": "Certificate Counts Over Time" },
+              "plugin": { "kind": "TimeSeriesChart", "spec": {} },
+              "queries": [
+                { "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "kcert_certificates_total",
+                  "seriesNameFormat": "total"
+                }}}},
+                { "kind": "TimeSeriesQuery", "spec": { "plugin": { "kind": "PrometheusTimeSeriesQuery", "spec": {
+                  "query": "kcert_certificates_expired_total",
+                  "seriesNameFormat": "expired"
+                }}}}
+              ]
+            }
+          }
+        }
+      }
+    }

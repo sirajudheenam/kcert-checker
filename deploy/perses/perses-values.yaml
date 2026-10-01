@@ -1,0 +1,54 @@
+# Perses Helm values for kcert-checker local demo.
+# Install/upgrade with: make perses-up
+#
+# Perses is a CNCF sandbox dashboarding tool with native PromQL support.
+# This config:
+#   - disables auth (local demo)
+#   - enables the metrics explorer
+#   - provisions the Prometheus datasource and kcert dashboard from files
+#     mounted at /etc/perses/provisioning
+
+config:
+  security:
+    readonly: false
+    enable_auth: false
+    cookie:
+      same_site: lax
+      secure: false
+
+  frontend:
+    explorer:
+      enable: true
+    information: |
+      ## kcert-checker
+      Certificate expiry monitoring for Kubernetes clusters.
+      [Source](https://github.com/sirajudheenam/kcert-checker)
+
+  provisioning:
+    folders:
+      - /etc/perses/provisioning
+    interval: 1m
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Mount the provisioning ConfigMap into the Perses pod
+volumes:
+  - name: perses-provisioning
+    configMap:
+      name: perses-provisioning
+
+volumeMounts:
+  - name: perses-provisioning
+    mountPath: /etc/perses/provisioning
+    readOnly: true

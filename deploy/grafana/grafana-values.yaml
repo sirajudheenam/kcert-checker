@@ -1,0 +1,52 @@
+# Grafana Helm values for kcert-checker local demo.
+# Install/upgrade with: make grafana-up
+#
+# Key choices:
+#   - adminPassword: "admin" (change for real clusters)
+#   - sidecar: watches ConfigMaps labelled grafana_dashboard=1 and auto-provisions them
+#   - datasource: Prometheus at http://prometheus-server (same namespace)
+
+adminPassword: admin
+
+grafana.ini:
+  server:
+    root_url: "%(protocol)s://%(domain)s:%(http_port)s/"
+  auth.anonymous:
+    enabled: true
+    org_role: Viewer
+
+# Provision Prometheus as the default datasource automatically
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server.monitoring.svc.cluster.local
+        access: proxy
+        isDefault: true
+        jsonData:
+          timeInterval: "60s"
+
+# Sidecar watches for ConfigMaps with label grafana_dashboard=1 and provisions them
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    searchNamespace: monitoring
+    folderAnnotation: grafana_folder
+    provider:
+      foldersFromFilesStructure: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+service:
+  type: ClusterIP
+  port: 80

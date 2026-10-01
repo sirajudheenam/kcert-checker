@@ -1,0 +1,205 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kcert-checker-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+    grafana_folder: "kcert-checker"
+data:
+  kcert-checker.json: |
+    {
+      "title": "kcert-checker — Certificate Expiry",
+      "uid": "kcert-checker",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "1m",
+      "time": { "from": "now-1h", "to": "now" },
+      "timezone": "browser",
+      "tags": ["kcert", "certificates", "tls"],
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Total Certificates",
+          "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "steps": [
+                { "color": "green", "value": null }
+              ]}
+            }
+          },
+          "targets": [{ "expr": "kcert_certificates_total", "legendFormat": "total" }]
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Expired Certificates",
+          "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 1 }
+              ]}
+            }
+          },
+          "targets": [{ "expr": "kcert_certificates_expired_total", "legendFormat": "expired" }]
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Expiring ≤ 7 days",
+          "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "steps": [
+                { "color": "green", "value": null },
+                { "color": "orange", "value": 1 }
+              ]}
+            }
+          },
+          "targets": [{
+            "expr": "count(((kcert_certificate_expiry_timestamp_seconds - time()) / 86400) < 7 and ((kcert_certificate_expiry_timestamp_seconds - time()) / 86400) >= 0) or vector(0)",
+            "legendFormat": "critical"
+          }]
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "Expiring ≤ 30 days",
+          "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "steps": [
+                { "color": "green", "value": null },
+                { "color": "yellow", "value": 1 }
+              ]}
+            }
+          },
+          "targets": [{
+            "expr": "count(((kcert_certificate_expiry_timestamp_seconds - time()) / 86400) < 30 and ((kcert_certificate_expiry_timestamp_seconds - time()) / 86400) >= 7) or vector(0)",
+            "legendFormat": "warning"
+          }]
+        },
+        {
+          "id": 5,
+          "type": "stat",
+          "title": "Scan Errors",
+          "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": { "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 1 }
+              ]}
+            }
+          },
+          "targets": [{ "expr": "kcert_scan_errors_total", "legendFormat": "errors" }]
+        },
+        {
+          "id": 6,
+          "type": "stat",
+          "title": "Last Scan",
+          "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+          "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "dateTimeFromNow",
+              "color": { "mode": "thresholds" },
+              "thresholds": { "steps": [{ "color": "green", "value": null }] }
+            }
+          },
+          "targets": [{ "expr": "kcert_scan_timestamp_seconds * 1000", "legendFormat": "last scan" }]
+        },
+        {
+          "id": 7,
+          "type": "table",
+          "title": "Certificate Expiry — All",
+          "gridPos": { "x": 0, "y": 4, "w": 24, "h": 12 },
+          "options": {
+            "sortBy": [{ "displayName": "Days Left", "desc": false }]
+          },
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "Days Left" },
+                "properties": [
+                  { "id": "unit", "value": "none" },
+                  { "id": "custom.displayMode", "value": "color-background" },
+                  { "id": "thresholds", "value": { "steps": [
+                    { "color": "red",    "value": null },
+                    { "color": "orange", "value": 0 },
+                    { "color": "yellow", "value": 7 },
+                    { "color": "green",  "value": 30 }
+                  ]}}
+                ]
+              }
+            ]
+          },
+          "targets": [{
+            "expr": "(kcert_certificate_expiry_timestamp_seconds - time()) / 86400",
+            "legendFormat": "{{namespace}} / {{source_name}} / {{subject_common_name}}",
+            "instant": true,
+            "format": "table"
+          }],
+          "transformations": [
+            { "id": "labelsToFields", "options": { "mode": "columns" } },
+            {
+              "id": "organize",
+              "options": {
+                "renameByName": {
+                  "Value": "Days Left",
+                  "namespace": "Namespace",
+                  "source_type": "Source Type",
+                  "source_name": "Source",
+                  "subject_common_name": "Subject CN",
+                  "issuer_common_name": "Issuer CN",
+                  "path": "Path",
+                  "container": "Container"
+                },
+                "excludeByName": { "Time": true }
+              }
+            }
+          ]
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Scan Duration",
+          "gridPos": { "x": 0, "y": 16, "w": 12, "h": 6 },
+          "fieldConfig": {
+            "defaults": { "unit": "s", "color": { "mode": "palette-classic" } }
+          },
+          "targets": [
+            { "expr": "histogram_quantile(0.99, rate(kcert_scan_duration_seconds_bucket[5m]))", "legendFormat": "p99" },
+            { "expr": "histogram_quantile(0.50, rate(kcert_scan_duration_seconds_bucket[5m]))", "legendFormat": "p50" }
+          ]
+        },
+        {
+          "id": 9,
+          "type": "timeseries",
+          "title": "Certificate Counts Over Time",
+          "gridPos": { "x": 12, "y": 16, "w": 12, "h": 6 },
+          "fieldConfig": {
+            "defaults": { "color": { "mode": "palette-classic" } }
+          },
+          "targets": [
+            { "expr": "kcert_certificates_total",         "legendFormat": "total" },
+            { "expr": "kcert_certificates_expired_total", "legendFormat": "expired" }
+          ]
+        }
+      ]
+    }

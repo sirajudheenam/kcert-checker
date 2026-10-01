@@ -19,7 +19,13 @@ K8S_VERSION ?= v1.37.0
 # even when make is invoked from an IDE terminal without the full user PATH.
 export PATH := /Applications/Docker.app/Contents/Resources/bin:/opt/homebrew/bin:$(PATH)
 
-.PHONY: all build test lint vet gen-test-certs integration-test integration-cluster-up integration-cluster-down clean
+.PHONY: all build test lint vet gen-test-certs \
+        integration-fixtures-up integration-fixtures-down \
+        integration-test integration-test-existing \
+        integration-cluster-up integration-cluster-down \
+        monitoring-stack monitoring-stack-down \
+        grafana-up perses-up perses-down \
+        clean help
 
 all: build
 
@@ -59,41 +65,132 @@ check: vet test
 gen-test-certs:
 	./scripts/gen-test-certs.sh
 
-## Create a local kind cluster with integration fixtures
+## Apply integration test fixtures to the current cluster (creates kcert-integration namespace)
+integration-fixtures-up: gen-test-certs
+	@echo "==> Applying integration fixtures to cluster: $$($(KUBECTL) config current-context)"
+	$(KUBECTL) apply -f tests/integration/fixtures/
+	@echo "==> Waiting for kcert-fixture pod to be Ready..."
+	$(KUBECTL) wait -n kcert-integration pod/kcert-fixture \
+		--for=condition=Ready \
+		--timeout=120s
+	@echo "==> Fixtures ready."
+
+## Delete the kcert-integration namespace and all fixtures from the current cluster
+integration-fixtures-down:
+	@echo "==> Deleting kcert-integration namespace..."
+	$(KUBECTL) delete namespace kcert-integration --ignore-not-found
+	@echo "==> Done."
+
+## Run integration tests against the current cluster, then clean up fixtures
+integration-test-existing: integration-fixtures-up
+	@echo "==> Running integration tests..."
+	$(GO) test -v -count=1 -tags integration -timeout 5m ./tests/integration/... ; \
+	EXIT=$$? ; \
+	$(MAKE) integration-fixtures-down ; \
+	exit $$EXIT
+
+## Create a dedicated kcert-integration kind cluster, run tests, then destroy it (CI use)
 integration-cluster-up: gen-test-certs
 	@echo "Creating kind cluster with Kubernetes $(K8S_VERSION)..."
 	$(KIND) create cluster \
 		--name $(CLUSTER) \
 		--image kindest/node:$(K8S_VERSION) \
 		--wait 120s
-	@echo "Applying integration fixtures..."
-	$(KUBECTL) apply -f tests/integration/fixtures/
-	@echo "Waiting for fixture pod..."
-	$(KUBECTL) wait -n kcert-integration pod/kcert-fixture \
+	$(KUBECTL) --context kind-$(CLUSTER) apply -f tests/integration/fixtures/
+	$(KUBECTL) --context kind-$(CLUSTER) wait -n kcert-integration pod/kcert-fixture \
 		--for=condition=Ready \
 		--timeout=120s
-	@echo "Cluster ready."
+	@echo "==> Cluster ready."
 
-## Destroy the integration kind cluster
+## Destroy the dedicated kcert-integration kind cluster
 integration-cluster-down:
 	$(KIND) delete cluster --name $(CLUSTER)
 
-## Run integration tests (creates cluster, runs tests, destroys cluster)
-# The cluster is torn down even if tests fail (EXIT captures the test exit code).
+## Run integration tests in a dedicated kind cluster (creates + destroys cluster)
 integration-test: integration-cluster-up
-	@echo "Running integration tests..."
+	@echo "==> Running integration tests..."
+	KUBECONFIG="$$($(KIND) get kubeconfig --name $(CLUSTER) 2>/dev/null)" \
 	$(GO) test -v -count=1 -tags integration -timeout 5m ./tests/integration/... ; \
 	EXIT=$$? ; \
 	$(MAKE) integration-cluster-down ; \
 	exit $$EXIT
 
-## Run integration tests against an existing cluster (skips cluster lifecycle)
-integration-test-existing:
-	$(GO) test -v -count=1 -tags integration -timeout 5m ./tests/integration/...
-
 ## Clean build artifacts
 clean:
 	rm -rf $(BUILD_DIR)
+
+# ── monitoring stack (Prometheus + Grafana + Perses) ──────────────────────────
+HELM_GRAFANA_RELEASE  := grafana
+HELM_PERSES_RELEASE   := perses
+MONITORING_NS         := monitoring
+
+## Install/upgrade Prometheus + Grafana + Perses into the monitoring namespace
+monitoring-stack: prometheus-up grafana-up perses-up
+	@echo "==> Monitoring stack ready."
+	@echo "    Prometheus:  make prometheus-port-forward   → http://localhost:9090"
+	@echo "    Grafana:     make grafana-port-forward      → http://localhost:3000  (admin/admin)"
+	@echo "    Perses:      make perses-port-forward       → http://localhost:8080"
+
+## Uninstall Prometheus + Grafana + Perses from the monitoring namespace
+monitoring-stack-down:
+	helm uninstall prometheus        --namespace $(MONITORING_NS) --ignore-not-found || true
+	helm uninstall $(HELM_GRAFANA_RELEASE) --namespace $(MONITORING_NS) --ignore-not-found || true
+	helm uninstall $(HELM_PERSES_RELEASE)  --namespace $(MONITORING_NS) --ignore-not-found || true
+
+## Install/upgrade Prometheus (with kcert scrape config + alert rules)
+prometheus-up:
+	@echo "==> Installing/upgrading Prometheus..."
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts 2>/dev/null || true
+	helm repo update prometheus-community
+	helm upgrade --install prometheus prometheus-community/prometheus \
+	  --namespace $(MONITORING_NS) \
+	  --create-namespace \
+	  -f alerts/prometheus-kcert-values.yaml \
+	  --wait --timeout=120s
+
+## Install/upgrade Grafana with kcert dashboard provisioned via ConfigMap sidecar
+grafana-up:
+	@echo "==> Installing/upgrading Grafana..."
+	helm repo add grafana-community https://grafana-community.github.io/helm-charts 2>/dev/null || true
+	helm repo update grafana-community
+	$(KUBECTL) create namespace $(MONITORING_NS) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) apply -f deploy/grafana/dashboards/
+	helm upgrade --install $(HELM_GRAFANA_RELEASE) grafana-community/grafana \
+	  --namespace $(MONITORING_NS) \
+	  -f deploy/grafana/grafana-values.yaml \
+	  --wait --timeout=120s
+	@echo "==> Grafana ready. Default credentials: admin / admin"
+	@echo "    Port-forward: make grafana-port-forward"
+
+## Install/upgrade Perses (CNCF open dashboarding, native PromQL support)
+perses-up:
+	@echo "==> Installing/upgrading Perses..."
+	helm repo add perses https://perses.github.io/helm-charts 2>/dev/null || true
+	helm repo update perses
+	$(KUBECTL) create namespace $(MONITORING_NS) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) apply -f deploy/perses/perses-provisioning-cm.yaml
+	helm upgrade --install $(HELM_PERSES_RELEASE) perses/perses \
+	  --namespace $(MONITORING_NS) \
+	  -f deploy/perses/perses-values.yaml \
+	  --wait --timeout=120s
+	@echo "==> Perses ready."
+	@echo "    Port-forward: make perses-port-forward"
+
+## Uninstall Perses
+perses-down:
+	helm uninstall $(HELM_PERSES_RELEASE) --namespace $(MONITORING_NS) --ignore-not-found || true
+
+## Port-forward Prometheus UI → localhost:9090
+prometheus-port-forward:
+	$(KUBECTL) port-forward svc/prometheus-server 9090:80 -n $(MONITORING_NS)
+
+## Port-forward Grafana UI → localhost:3000
+grafana-port-forward:
+	$(KUBECTL) port-forward svc/$(HELM_GRAFANA_RELEASE) 3000:80 -n $(MONITORING_NS)
+
+## Port-forward Perses UI → localhost:8080
+perses-port-forward:
+	$(KUBECTL) port-forward svc/$(HELM_PERSES_RELEASE) 8080:8080 -n $(MONITORING_NS)
 
 ## Show help
 help:
