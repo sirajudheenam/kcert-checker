@@ -5,7 +5,7 @@
 // Prerequisites:
 //   - A running cluster with KUBECONFIG set.
 //   - The integration fixtures applied:
-//       kubectl apply -f tests/integration/fixtures/
+//     kubectl apply -f tests/integration/fixtures/
 //   - The kcert-fixture pod in namespace kcert-integration must be Ready.
 //
 // Run with:
@@ -16,6 +16,7 @@ package integration
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -40,7 +41,17 @@ func newClientset(t *testing.T) kubernetes.Interface {
 		home, _ := os.UserHomeDir()
 		kubeconfig = home + "/.kube/config"
 	}
-	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	// KUBECONFIG may be a colon-separated list; use client-go's loading rules
+	// which understand the list format (same as kubectl).
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		loadingRules.Precedence = filepath.SplitList(kubeconfig)
+	}
+	clientCfg := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		&clientcmd.ConfigOverrides{},
+	)
+	cfg, err := clientCfg.ClientConfig()
 	if err != nil {
 		t.Fatalf("build kubeconfig: %v", err)
 	}
@@ -144,7 +155,14 @@ func TestPodCertsDiscovered(t *testing.T) {
 		home, _ := os.UserHomeDir()
 		kubeconfig = home + "/.kube/config"
 	}
-	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		loadingRules.Precedence = filepath.SplitList(kubeconfig)
+	}
+	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		&clientcmd.ConfigOverrides{},
+	).ClientConfig()
 	if err != nil {
 		t.Fatalf("build rest config: %v", err)
 	}

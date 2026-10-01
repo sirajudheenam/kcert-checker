@@ -1,0 +1,101 @@
+{{- /* Helm test pods — run with: helm test <release> -n <namespace> */ -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "kcert-checker.fullname" . }}-test-healthz
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kcert-checker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test-healthz
+      image: curlimages/curl:8.7.1
+      command:
+        - sh
+        - -c
+        - |
+          echo ">>> /healthz must return 200"
+          curl -sf http://{{ include "kcert-checker.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/healthz
+          echo
+          echo "PASS: /healthz"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "kcert-checker.fullname" . }}-test-readyz
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kcert-checker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test-readyz
+      image: curlimages/curl:8.7.1
+      command:
+        - sh
+        - -c
+        - |
+          echo ">>> /readyz must return 200 (first scan complete)"
+          curl -sf http://{{ include "kcert-checker.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/readyz
+          echo
+          echo "PASS: /readyz"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "kcert-checker.fullname" . }}-test-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kcert-checker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test-metrics
+      image: curlimages/curl:8.7.1
+      command:
+        - sh
+        - -c
+        - |
+          echo ">>> /metrics must contain kcert_checker metric family"
+          curl -sf http://{{ include "kcert-checker.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}/metrics | grep -q "kcert_"
+          echo "PASS: /metrics contains kcert_ metrics"
+{{- if .Values.ui.enabled }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "kcert-checker.fullname" . }}-test-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kcert-checker.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test-ui
+      image: curlimages/curl:8.7.1
+      command:
+        - sh
+        - -c
+        - |
+          echo ">>> UI must return HTTP 200"
+          curl -sf http://{{ include "kcert-checker.fullname" . }}-ui.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ui.service.port }}/
+          echo
+          echo "PASS: UI is reachable"
+{{- end }}

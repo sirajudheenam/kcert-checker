@@ -35,6 +35,29 @@ func NewContainerReader(
 	}
 }
 
+// ListFiles expands a glob pattern inside the container by running
+// `ls -1 <pattern>` and returns the matched paths, one per line.
+// Returns an empty slice (not an error) when the pattern matches nothing —
+// most containers won't have most configured directories.
+func (r *ContainerReader) ListFiles(
+	ctx context.Context,
+	namespace, pod, container, pattern string,
+) ([]string, error) {
+	data, err := r.exec(ctx, namespace, pod, container, []string{"ls", "-1", pattern})
+	if err != nil {
+		// ls exits non-zero when nothing matches; treat that as "no files".
+		return nil, nil
+	}
+	var paths []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths, nil
+}
+
 // ReadFile runs `cat <path>` inside the specified container and returns the
 // raw bytes. Returns an error if the file does not exist or the exec fails —
 // callers treat a missing file as normal (most containers won't have most
@@ -46,7 +69,16 @@ func (r *ContainerReader) ReadFile(
 	container string,
 	path string,
 ) ([]byte, error) {
+	return r.exec(ctx, namespace, pod, container, []string{"cat", path})
+}
 
+// exec runs an arbitrary command inside a container via the Kubernetes pod/exec
+// SPDY subresource and returns combined stdout bytes.
+func (r *ContainerReader) exec(
+	ctx context.Context,
+	namespace, pod, container string,
+	command []string,
+) ([]byte, error) {
 	req := r.Clientset.
 		CoreV1().
 		RESTClient().
@@ -59,12 +91,9 @@ func (r *ContainerReader) ReadFile(
 	req.VersionedParams(
 		&corev1.PodExecOptions{
 			Container: container,
-			Command: []string{
-				"cat",
-				path,
-			},
-			Stdout: true,
-			Stderr: true,
+			Command:   command,
+			Stdout:    true,
+			Stderr:    true,
 		},
 		scheme.ParameterCodec,
 	)
@@ -92,13 +121,9 @@ func (r *ContainerReader) ReadFile(
 
 	if err != nil {
 		return nil, fmt.Errorf(
-			"exec %s/%s/%s path %s: %w: %s",
-			namespace,
-			pod,
-			container,
-			path,
-			err,
-			strings.TrimSpace(stderr.String()),
+			"exec %s/%s/%s %v: %w: %s",
+			namespace, pod, container, command,
+			err, strings.TrimSpace(stderr.String()),
 		)
 	}
 

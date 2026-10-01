@@ -30,7 +30,8 @@ func buildTestScanner(objs []runtime.Object, files map[string][]byte, mode strin
 	}
 
 	s := New(clientset, reader, m, config.ScannerConfig{
-		Certificates: config.CertificateConfig{Paths: []string{"/etc/certs/tls.crt", "/etc/certs/ca.crt"}},
+		// Use glob patterns: the fake reader expands these via filepath.Match.
+		Certificates: config.CertificateConfig{Paths: []string{"/etc/certs/*", "/etc/tls/*"}},
 		Containers:   config.ContainerConfig{Mode: mode, Exclude: []string{"istio-proxy"}},
 		Namespaces:   config.NamespaceConfig{Exclude: []string{"kube-system"}},
 		Secrets:      config.SecretConfig{Exclude: []string{"sh.helm.release.*"}},
@@ -331,7 +332,7 @@ func TestScanSkipsExcludedPod(t *testing.T) {
 	reader := &fakeContainerReader{files: files}
 	m := metrics.NewWithRegistry(prometheus.NewRegistry())
 	s := New(clientset, reader, m, config.ScannerConfig{
-		Certificates: config.CertificateConfig{Paths: []string{"/etc/certs/tls.crt"}},
+		Certificates: config.CertificateConfig{Paths: []string{"/etc/certs/*"}},
 		Containers:   config.ContainerConfig{Mode: "exec"},
 		Pods:         config.PodConfig{Exclude: []string{"debug-*"}},
 	})
@@ -361,7 +362,7 @@ func TestScanIncludesInitContainers(t *testing.T) {
 	reader := &fakeContainerReader{files: files}
 	m := metrics.NewWithRegistry(prometheus.NewRegistry())
 	s := New(clientset, reader, m, config.ScannerConfig{
-		Certificates: config.CertificateConfig{Paths: []string{"/etc/certs/tls.crt"}},
+		Certificates: config.CertificateConfig{Paths: []string{"/etc/certs/*"}},
 		Containers:   config.ContainerConfig{Mode: "exec", IncludeInitContainers: true},
 	})
 	results := s.Scan(context.Background())
@@ -564,10 +565,106 @@ func TestScanPodListError(t *testing.T) {
 	_ = s.Scan(context.Background())
 }
 
-// --- Container error path coverage ---
+// TestScanGlobExpandsMultipleFiles verifies that a single glob pattern like
+// "/etc/certs/*" discovers all cert files in that directory rather than only
+// an exact filename.
+func TestScanGlobExpandsMultipleFiles(t *testing.T) {
+	cert1 := selfSignedPEM(t, "service-a", time.Now().Add(30*24*time.Hour))
+	cert2 := selfSignedPEM(t, "service-b", time.Now().Add(60*24*time.Hour))
+	cert3 := selfSignedPEM(t, "ca-root", time.Now().Add(365*24*time.Hour))
+
+	pod := runningPod("default", "my-pod", "app")
+	objs := []runtime.Object{ns("default"), pod}
+	// Three distinct files under the same directory — all matched by /etc/certs/*
+	files := map[string][]byte{
+		"/etc/certs/tls.crt": cert1,
+		"/etc/certs/ca.crt":  cert2,
+		"/etc/certs/chain.crt": cert3,
+	}
+
+	clientset := fake.NewSimpleClientset(objs...)
+	reader := &fakeContainerReader{files: files}
+	m := metrics.NewWithRegistry(prometheus.NewRegistry())
+	s := New(clientset, reader, m, config.ScannerConfig{
+		Certificates: config.CertificateConfig{Paths: []string{"/etc/certs/*"}},
+		Containers:   config.ContainerConfig{Mode: "exec"},
+	})
+	results := s.Scan(context.Background())
+	if len(results) != 3 {
+		t.Errorf("expected 3 results (all files matched by glob), got %d", len(results))
+	}
+}
+
+// TestScanGlobNoMatch verifies that a pattern matching no files produces zero
+// results without an error — most containers won't have most directories.
+func TestScanGlobNoMatch(t *testing.T) {
+	pod := runningPod("default", "empty-pod", "app")
+	objs := []runtime.Object{ns("default"), pod}
+
+	s, _ := buildTestScanner(objs, map[string][]byte{}, "exec")
+	results := s.Scan(context.Background())
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for empty container, got %d", len(results))
+	}
+}
+
+// TestScanGlobMultiplePatterns verifies that multiple glob patterns cover
+// different directories and their results are combined.
+func TestScanGlobMultiplePatterns(t *testing.T) {
+	certA := selfSignedPEM(t, "tls-cert", time.Now().Add(30*24*time.Hour))
+	certB := selfSignedPEM(t, "ca-cert", time.Now().Add(90*24*time.Hour))
+
+	pod := runningPod("default", "my-pod", "app")
+	objs := []runtime.Object{ns("default"), pod}
+	files := map[string][]byte{
+		"/etc/tls/tls.crt":  certA,
+		"/etc/certs/ca.crt": certB,
+	}
+
+	clientset := fake.NewSimpleClientset(objs...)
+	reader := &fakeContainerReader{files: files}
+	m := metrics.NewWithRegistry(prometheus.NewRegistry())
+	s := New(clientset, reader, m, config.ScannerConfig{
+		// Two separate glob patterns covering two different directories.
+		Certificates: config.CertificateConfig{Paths: []string{"/etc/tls/*", "/etc/certs/*"}},
+		Containers:   config.ContainerConfig{Mode: "exec"},
+	})
+	results := s.Scan(context.Background())
+	if len(results) != 2 {
+		t.Errorf("expected 2 results (one from each glob), got %d", len(results))
+	}
+}
+
+// TestScanExactPathStillWorks confirms backwards compatibility: an exact path
+// like "/etc/tls/tls.crt" (no wildcard) still works because ListFiles returns
+// it verbatim when filepath.Match matches an exact pattern against itself.
+func TestScanExactPathStillWorks(t *testing.T) {
+	cert := selfSignedPEM(t, "exact-path", time.Now().Add(30*24*time.Hour))
+	pod := runningPod("default", "my-pod", "app")
+	objs := []runtime.Object{ns("default"), pod}
+	files := map[string][]byte{"/etc/tls/tls.crt": cert}
+
+	clientset := fake.NewSimpleClientset(objs...)
+	reader := &fakeContainerReader{files: files}
+	m := metrics.NewWithRegistry(prometheus.NewRegistry())
+	s := New(clientset, reader, m, config.ScannerConfig{
+		Certificates: config.CertificateConfig{Paths: []string{"/etc/tls/tls.crt"}},
+		Containers:   config.ContainerConfig{Mode: "exec"},
+	})
+	results := s.Scan(context.Background())
+	if len(results) != 1 {
+		t.Errorf("expected 1 result for exact path, got %d", len(results))
+	}
+}
+
+// --- Container read error (all reads fail) ---
 
 type erroringReader struct {
 	err error
+}
+
+func (r *erroringReader) ListFiles(_ context.Context, _, _, _, _ string) ([]string, error) {
+	return nil, r.err
 }
 
 func (r *erroringReader) ReadFile(_ context.Context, _, _, _ string, _ string) ([]byte, error) {

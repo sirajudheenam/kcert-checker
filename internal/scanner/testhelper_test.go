@@ -10,6 +10,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -44,10 +46,23 @@ func selfSignedPEM(t interface{ Helper(); Fatal(...interface{}) }, subject strin
 }
 
 // fakeContainerReader implements the FileReader interface used by scanContainer.
-// It returns pre-configured file data keyed by path; paths not in the map
-// return notFoundError, which the scanner treats as "file absent" and silently skips.
+// files maps exact paths to PEM content; ListFiles returns any key that matches
+// the given pattern using filepath.Match so tests can use wildcards naturally.
 type fakeContainerReader struct {
 	files map[string][]byte
+}
+
+func (f *fakeContainerReader) ListFiles(_ context.Context, _, _, _ string, pattern string) ([]string, error) {
+	var matches []string
+	for path := range f.files {
+		ok, _ := filepath.Match(pattern, path)
+		if ok {
+			matches = append(matches, path)
+		}
+	}
+	// Sort for deterministic test output.
+	sort.Strings(matches)
+	return matches, nil
 }
 
 func (f *fakeContainerReader) ReadFile(_ context.Context, _, _, _ string, path string) ([]byte, error) {

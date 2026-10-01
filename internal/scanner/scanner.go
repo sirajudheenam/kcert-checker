@@ -30,7 +30,10 @@ type Scanner struct {
 	Clientset             kubernetes.Interface
 	ContainerReader       FileReader
 	Metrics               *metrics.Metrics
-	CertificatePaths      []string
+	// CertificatePatterns is a list of glob patterns passed to `ls -1` inside
+	// each container (e.g. "/etc/certs/*", "/etc/tls/*.crt"). Each pattern is
+	// expanded at scan time so new files are discovered without a config change.
+	CertificatePatterns   []string
 	IncludeInitContainers bool
 	ContainerScanMode     string // "exec" or "disabled"
 	ExcludeNamespaces     []string
@@ -50,7 +53,7 @@ func New(
 		Clientset:             clientset,
 		ContainerReader:       containerReader,
 		Metrics:               metricsClient,
-		CertificatePaths:      cfg.Certificates.Paths,
+		CertificatePatterns:   cfg.Certificates.Paths,
 		IncludeInitContainers: cfg.Containers.IncludeInitContainers,
 		ContainerScanMode:     cfg.Containers.Mode,
 		ExcludeNamespaces:     cfg.Namespaces.Exclude,
@@ -242,17 +245,34 @@ const execTimeout = 5 * time.Second
 func (s *Scanner) scanContainer(ctx context.Context, namespace, pod, container string) ([]result.CertificateResult, error) {
 	log.Printf("Scanning container: %s/%s/%s", namespace, pod, container)
 
+	// Phase 1: expand every glob pattern into concrete file paths.
+	// Patterns like "/etc/certs/*" are resolved inside the container via
+	// `ls -1 <pattern>` so new cert files are discovered without config changes.
+	var paths []string
+	for _, pattern := range s.CertificatePatterns {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		expandCtx, cancel := context.WithTimeout(ctx, execTimeout)
+		expanded, _ := s.ContainerReader.ListFiles(expandCtx, namespace, pod, container, pattern)
+		cancel()
+		paths = append(paths, expanded...)
+	}
+
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
 	type pathResult struct {
 		certs []result.CertificateResult
 		err   bool
 	}
 
+	// Phase 2: read and parse each resolved path in parallel.
 	// Buffered so goroutines never block sending even if we stop reading early.
-	resultsCh := make(chan pathResult, len(s.CertificatePaths))
+	resultsCh := make(chan pathResult, len(paths))
 
-	// Fan out: probe all configured paths in parallel so a slow exec on one
-	// path does not serialize the rest.
-	for _, path := range s.CertificatePaths {
+	for _, path := range paths {
 		if ctx.Err() != nil {
 			break
 		}
@@ -284,7 +304,7 @@ func (s *Scanner) scanContainer(ctx context.Context, namespace, pod, container s
 	}
 
 	var all []result.CertificateResult
-	for range s.CertificatePaths {
+	for range paths {
 		r := <-resultsCh
 		if r.err {
 			s.Metrics.IncScanErrors()

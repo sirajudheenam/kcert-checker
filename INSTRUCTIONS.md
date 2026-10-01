@@ -1,17 +1,12 @@
 ```bash
 CERT_PATHS=(
-    "/etc/ssl/postfix/tls.crt"
-    "/etc/ssl/postfix/ca.crt"
-    "/etc/ssl/certs/tls.crt"
-    "/etc/tls/tls.crt"
-    "/etc/tls/ca.crt"
-    "/etc/certs/tls.crt"
-    "/etc/certs/server.crt"
-    "/etc/certs/ca.crt"
-    "/tls/tls.crt"
-    "/tls/server.crt"
-    "/var/run/secrets/tls/tls.crt"
-    "/var/run/secrets/tls/ca.crt"
+    "/etc/ssl/postfix/*"
+    "/etc/ssl/certs/*"
+    "/etc/tls/*"
+    "/etc/certs/*"
+    "/tls/*"
+    "/var/run/secrets/tls/*"
+
 )
 PODS=$(kubectl get pods -A \
     -o jsonpath='{range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"\n"}{end}' \

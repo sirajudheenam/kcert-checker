@@ -1,0 +1,18 @@
+# Gateway — Envoy Gateway provisions a real Envoy proxy pod + LoadBalancer Service
+# for each Gateway resource.  On kind there is no cloud LB, so we port-forward the
+# Service instead (see: make kind-gw-port-forward).
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: kcert-gateway
+  namespace: monitoring
+spec:
+  gatewayClassName: envoy
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      # allowedRoutes lets HTTPRoutes in the same namespace attach to this listener.
+      allowedRoutes:
+        namespaces:
+          from: Same

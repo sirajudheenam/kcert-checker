@@ -8,6 +8,27 @@ image:
   pullPolicy: IfNotPresent
   tag: "latest"
 
+ui:
+  enabled: true
+  image:
+    repository: sirajudheenam/kcert-checker-ui
+    pullPolicy: IfNotPresent
+    tag: "latest"
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 1001
+
 # nameOverride / fullnameOverride change the chart name used in resource names.
 nameOverride: ""
 fullnameOverride: ""
@@ -47,31 +68,42 @@ securityContext:
 # config is rendered into the ConfigMap mounted at /etc/kcert-checker/config.yaml.
 config:
   kubernetes:
-    mode: "auto"
+    mode: "in-cluster"
   scanner:
-    namespaces: all
+    namespaces:
+      exclude:
+        - kube-system
+        - kube-public
+        - kube-node-lease
     containers:
       include_init_containers: false
+      exclude:
+        - istio-proxy
+        - linkerd-proxy
+    pods:
+      exclude:
+        - "debug-*"
+        - "test-*"
+    secrets:
+      exclude:
+        - "sh.helm.release.*"
     certificates:
-      # Paths checked inside every running container via pod/exec `cat`.
-      # Missing paths are silently skipped — most containers won't have most paths.
+      # Glob patterns expanded inside each container via `ls -1 <pattern>`.
+      # Use directory wildcards (e.g. /etc/certs/*) to catch all cert files
+      # without listing every filename. Exact paths also work.
       paths:
-        - /etc/ssl/postfix/tls.crt
-        - /etc/ssl/postfix/ca.crt
-        - /etc/tls/tls.crt
-        - /etc/tls/ca.crt
-        - /etc/certs/tls.crt
-        - /etc/certs/server.crt
-        - /etc/certs/ca.crt
-        - /var/run/secrets/tls/tls.crt
-        - /var/run/secrets/tls/ca.crt
+        - /etc/ssl/postfix/*
+        - /etc/tls/*
+        - /etc/certs/*
+        - /var/run/secrets/tls/*
   metrics:
     enabled: true
     listen_address: "0.0.0.0:8080"
     path: "/metrics"
   scan:
-    # interval_seconds key maps to the interval_hours Go field — unit is HOURS.
-    interval_seconds: 24
+    interval_seconds: 3600
+    warning_days: 30
+    critical_days: 7
 
 # serviceMonitor provisions a ServiceMonitor for the Prometheus Operator.
 # Only enable if monitoring.coreos.com/v1 CRD is present (kube-prometheus-stack).

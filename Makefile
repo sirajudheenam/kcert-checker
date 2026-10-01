@@ -10,6 +10,7 @@ BUILD_DIR   := bin
 GO     := $(shell which go 2>/dev/null || echo /opt/homebrew/Cellar/go/1.27.1/libexec/bin/go)
 KIND   := $(shell which kind 2>/dev/null || echo /opt/homebrew/bin/kind)
 KUBECTL:= $(shell which kubectl 2>/dev/null || echo /opt/homebrew/bin/kubectl)
+DOCKER:= $(shell which docker 2>/dev/null || echo /usr/local/bin/docker)
 
 CLUSTER     := kcert-integration
 K8S_VERSION ?= v1.37.0
@@ -18,7 +19,7 @@ K8S_VERSION ?= v1.37.0
 # even when make is invoked from an IDE terminal without the full user PATH.
 export PATH := /Applications/Docker.app/Contents/Resources/bin:/opt/homebrew/bin:$(PATH)
 
-.PHONY: all build test lint vet integration-test integration-cluster-up integration-cluster-down clean
+.PHONY: all build test lint vet gen-test-certs integration-test integration-cluster-up integration-cluster-down clean
 
 all: build
 
@@ -26,6 +27,20 @@ all: build
 build:
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -o $(BUILD_DIR)/$(BINARY) ./cmd/kcert-checker
+
+docker-build-arm64:
+	$(DOCKER) buildx build \
+  		--platform linux/arm64 \
+  		-t sirajudheenam/kcert-checker:local \
+		-f ./Dockerfile.local --push .
+  		
+docker-build-amd64:
+	$(DOCKER) buildx build \
+  		--platform linux/amd64 \
+  		-t sirajudheenam/kcert-checker:latest \
+		-t sirajudheenam/kcert-checker:1.0.0 \
+		-f ./Dockerfile.cluster --push .
+
 
 ## Run unit tests with coverage
 test:
@@ -38,8 +53,14 @@ vet:
 ## Run all checks (vet + unit tests)
 check: vet test
 
+## Regenerate tests/integration/fixtures/01-secrets.yaml with Go-compatible P-256 certs
+## Required on macOS (LibreSSL emits explicit EC params; Go rejects them).
+## Run this whenever cert expiry windows drift or after a fresh clone.
+gen-test-certs:
+	./scripts/gen-test-certs.sh
+
 ## Create a local kind cluster with integration fixtures
-integration-cluster-up:
+integration-cluster-up: gen-test-certs
 	@echo "Creating kind cluster with Kubernetes $(K8S_VERSION)..."
 	$(KIND) create cluster \
 		--name $(CLUSTER) \

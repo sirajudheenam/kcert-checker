@@ -59,6 +59,8 @@ func TestNewClientKubeconfig(t *testing.T) {
 // TestNewClientKubeconfigMissingFile verifies that a non-existent kubeconfig
 // path returns an error rather than silently using defaults.
 func TestNewClientKubeconfigMissingFile(t *testing.T) {
+	// Clear KUBECONFIG so the explicit Kubeconfig path is used, not the env var.
+	t.Setenv("KUBECONFIG", "")
 	cfg := config.KubernetesConfig{Mode: "kubeconfig", Kubeconfig: "/nonexistent/kubeconfig"}
 	_, err := NewClient(cfg)
 	if err == nil {
@@ -84,6 +86,8 @@ func TestNewClientKubeconfigFromEnv(t *testing.T) {
 // TestNewClientKubeconfigWithContext verifies that an explicit context override
 // is accepted and does not cause an error when the context exists in the file.
 func TestNewClientKubeconfigWithContext(t *testing.T) {
+	// Clear KUBECONFIG so the explicit Kubeconfig path is used, not the env var.
+	t.Setenv("KUBECONFIG", "")
 	kc := writeFakeKubeconfig(t)
 	cfg := config.KubernetesConfig{Mode: "kubeconfig", Kubeconfig: kc, Context: "test-context"}
 	client, err := NewClient(cfg)
@@ -101,6 +105,8 @@ func TestNewClientAutoFallsBackToKubeconfig(t *testing.T) {
 	// Ensure we are not running in a Kubernetes pod
 	t.Setenv("KUBERNETES_SERVICE_HOST", "")
 	t.Setenv("KUBERNETES_SERVICE_PORT", "")
+	// Clear KUBECONFIG so the explicit cfg.Kubeconfig path is used, not the env var.
+	t.Setenv("KUBECONFIG", "")
 
 	kc := writeFakeKubeconfig(t)
 	cfg := config.KubernetesConfig{Mode: "auto", Kubeconfig: kc}

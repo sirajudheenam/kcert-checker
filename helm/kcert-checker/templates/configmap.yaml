@@ -12,10 +12,30 @@ data:
       mode: {{ .Values.config.kubernetes.mode | quote }}
 
     scanner:
-      namespaces: {{ .Values.config.scanner.namespaces }}
+      namespaces:
+        exclude:
+          {{- range .Values.config.scanner.namespaces.exclude }}
+          - {{ . }}
+          {{- end }}
 
       containers:
         include_init_containers: {{ .Values.config.scanner.containers.include_init_containers }}
+        exclude:
+          {{- range .Values.config.scanner.containers.exclude }}
+          - {{ . }}
+          {{- end }}
+
+      pods:
+        exclude:
+          {{- range .Values.config.scanner.pods.exclude }}
+          - {{ . | quote }}
+          {{- end }}
+
+      secrets:
+        exclude:
+          {{- range .Values.config.scanner.secrets.exclude }}
+          - {{ . | quote }}
+          {{- end }}
 
       certificates:
         paths:
@@ -30,3 +50,5 @@ data:
 
     scan:
       interval_seconds: {{ .Values.config.scan.interval_seconds }}
+      warning_days: {{ .Values.config.scan.warning_days }}
+      critical_days: {{ .Values.config.scan.critical_days }}

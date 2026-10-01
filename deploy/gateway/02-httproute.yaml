@@ -1,0 +1,75 @@
+# HTTPRoute — routes HTTP traffic from the Gateway to kcert-checker services.
+#
+# Path routing:
+#   /metrics          → kcert-checker:8080  (Prometheus scrape endpoint)
+#   /healthz          → kcert-checker:8080  (liveness check)
+#   /readyz           → kcert-checker:8080  (readiness check)
+#   /ui               → kcert-checker:8080  (embedded Go dashboard)
+#   /api/certificates → kcert-checker:8080  (JSON API for Next.js UI)
+#   /                 → kcert-checker-ui:3000 (Next.js UI catch-all)
+#
+# Try it after `make kind-gw-port-forward` (localhost:8888):
+#   curl http://localhost:8888/healthz
+#   curl http://localhost:8888/metrics
+#   curl http://localhost:8888/api/certificates
+#   open http://localhost:8888/ui
+#   open http://localhost:8888/          ← Next.js UI
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kcert-checker
+  namespace: monitoring
+spec:
+  parentRefs:
+    - name: kcert-gateway
+      namespace: monitoring
+  rules:
+    # Backend API and built-in Go dashboard — exact and prefix matches
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /metrics
+      backendRefs:
+        - name: kcert-checker
+          port: 8080
+
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /healthz
+      backendRefs:
+        - name: kcert-checker
+          port: 8080
+
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /readyz
+      backendRefs:
+        - name: kcert-checker
+          port: 8080
+
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /ui
+      backendRefs:
+        - name: kcert-checker
+          port: 8080
+
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      backendRefs:
+        - name: kcert-checker
+          port: 8080
+
+    # Next.js UI — catch-all (must be last)
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: kcert-checker-ui
+          port: 3000

@@ -1,0 +1,8 @@
+# GatewayClass — binds to the Envoy Gateway controller installed by `make kind-setup`.
+# One GatewayClass per cluster is enough; multiple Gateways can reference it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller

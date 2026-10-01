@@ -13,6 +13,7 @@ brew install go docker kind kubectl helm
 ```
 
 Verify versions:
+
 ```bash
 go version        # 1.21+
 docker --version
@@ -43,6 +44,7 @@ kubectl get nodes
 ```
 
 Expected output:
+
 ```
 NAME                 STATUS   ROLES           AGE   VERSION
 kind-control-plane   Ready    control-plane   30s   v1.37.x
@@ -63,8 +65,8 @@ docker buildx build \
   --platform linux/arm64 \
   -t kcert-checker:local .
 
-kind load docker-image sirajudheenam/kcert-checker:local-arm64 --name=cka
-kind load docker-image sirajudheenam/kcert-checker:latest --name=cka
+kind load docker-image sirajudheenam/kcert-checker:local --name=kind
+kind load docker-image sirajudheenam/kcert-checker:latest --name=kind
 
 docker run --rm -it \
   -e KUBECONFIG=/kube/config \
@@ -86,6 +88,7 @@ kind load docker-image kcert-checker:local
 ```
 
 Verify the image is in kind:
+
 ```bash
 docker exec kind-control-plane crictl images | grep kcert
 
@@ -166,6 +169,7 @@ helm install kcert-checker ./helm/kcert-checker \
 ```
 
 For a real cluster with a registry image, omit the `--set` overrides:
+
 ```bash
 helm install kcert-checker ./helm/kcert-checker \
   --namespace monitoring
@@ -200,17 +204,18 @@ kubectl port-forward svc/kcert-checker 8080:8080 -n monitoring
 kubectl port-forward svc/kcert-checker-ui 3000:3000 -n monitoring
 
 curl -s http://localhost:8080/healthz
-echo 
+echo
 curl -s http://localhost:8080/readyz
-echo 
+echo
 curl -s http://localhost:8080/metrics
-echo 
+echo
 curl -s http://localhost:3000/
-echo 
+echo
 
 ```
 
 Expected log output:
+
 ```
 Starting kcert-checker
 Scanning namespace: monitoring
@@ -223,6 +228,7 @@ Scan complete
 ## 6. Wire Prometheus to scrape kcert-checker
 
 The file `prometheus-kcert-values.yaml` contains:
+
 - A scrape job (`job_name: kcert-checker`) using endpointslice service discovery
 - Five alert rules covering expired through 90-day expiry windows
 
@@ -254,6 +260,7 @@ sleep 2
 ```
 
 Check scrape targets:
+
 ```bash
 curl -s http://localhost:9092/api/v1/targets | python3 -c "
 import sys,json
@@ -267,11 +274,13 @@ for t in d['data']['activeTargets']:
 ```
 
 Expected:
+
 ```
 kcert-checker -> up | http://10.244.0.x:8080/metrics
 ```
 
 If the job does not appear, check the scrape config was applied:
+
 ```bash
 curl -s http://localhost:9092/api/v1/status/config | python3 -c "
 import sys,json; d=json.load(sys.stdin); print(d['data']['yaml'][:3000])
@@ -312,11 +321,13 @@ kubectl rollout status deployment/kcert-checker -n monitoring
 ```
 
 Check the scan found the test certs:
+
 ```bash
 kubectl logs -n monitoring deployment/kcert-checker | grep "kcert-test"
 ```
 
 Check metrics for the test pod:
+
 ```bash
 curl -s "http://localhost:9092/api/v1/query?query=kcert_certificate_expiry_timestamp_seconds" | python3 -c "
 import sys,json,time
@@ -405,12 +416,14 @@ kubectl rollout status deployment/kcert-checker -n monitoring
 ## 13. Configuration
 
 View the current config:
+
 ```bash
 kubectl get configmap kcert-checker-config -n monitoring \
   -o jsonpath='{.data.config\.yaml}'
 ```
 
 Edit in-place:
+
 ```bash
 kubectl edit configmap kcert-checker-config -n monitoring
 # Then restart to pick up changes:
@@ -418,6 +431,7 @@ kubectl rollout restart deployment/kcert-checker -n monitoring
 ```
 
 Or change via Helm values:
+
 ```bash
 helm upgrade kcert-checker ./helm/kcert-checker \
   -n monitoring \
@@ -431,6 +445,7 @@ helm upgrade kcert-checker ./helm/kcert-checker \
 ### kcert-checker pod is in `ImagePullBackOff`
 
 The DockerHub image has no arm64 build. Use the local image:
+
 ```bash
 docker build -t kcert-checker:local .
 kind load docker-image kcert-checker:local
@@ -446,6 +461,7 @@ Kubernetes rejects a string username (`nonroot`) with `runAsNonRoot: true`. Fix:
 ### Config file not found: `/etc/kcert-checker/config.yaml`
 
 The original `deploy/deployment.yaml` mounted the ConfigMap at `/etc/kcert` instead of `/etc/kcert-checker`. Fix with the Helm chart (already correct) or:
+
 ```bash
 kubectl patch deployment kcert-checker -n monitoring --type=json \
   -p='[{"op":"replace","path":"/spec/template/spec/containers/0/volumeMounts/0","value":{"name":"config","mountPath":"/etc/kcert-checker","readOnly":true}}]'
@@ -454,10 +470,13 @@ kubectl patch deployment kcert-checker -n monitoring --type=json \
 ### Prometheus does not show `kcert-checker` as a scrape target
 
 The `endpointslice` SD role does not expose `__meta_kubernetes_service_name`. The correct relabel label is:
+
 ```
 __meta_kubernetes_endpointslice_label_kubernetes_io_service_name
 ```
+
 This is already correct in `prometheus-kcert-values.yaml`. If you see `kcert-checker` in `droppedTargets`, recheck the relabel config applied to Prometheus:
+
 ```bash
 curl -s http://localhost:9092/api/v1/status/config | python3 -c \
   "import sys,json; print(json.load(sys.stdin)['data']['yaml'])" | grep -A 30 kcert-checker
@@ -466,6 +485,7 @@ curl -s http://localhost:9092/api/v1/status/config | python3 -c \
 ### Prometheus config not reloading after `helm upgrade`
 
 The Prometheus config-reloader sidecar watches the ConfigMap. If changes don't appear, force a reload:
+
 ```bash
 kubectl port-forward -n monitoring svc/prometheus-server 9092:80 &
 curl -s -XPOST http://localhost:9092/-/reload

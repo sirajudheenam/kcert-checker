@@ -15,10 +15,9 @@ data:
     scanner:
       namespaces:
         exclude:
-          # Uncomment to skip system namespaces:
-          # - kube-system
-          # - kube-public
-          # - kube-node-lease
+          - kube-system
+          - kube-public
+          - kube-node-lease
 
       containers:
         include_init_containers: false
@@ -36,18 +35,13 @@ data:
           - "sh.helm.release.*"
 
       certificates:
-        # Paths checked inside every running container via pod/exec cat.
-        # Missing paths are silently skipped.
+        # Glob patterns expanded inside each container via `ls -1 <pattern>`.
+        # Use directory wildcards to catch all cert files automatically.
         paths:
-          - /etc/ssl/postfix/tls.crt
-          - /etc/ssl/postfix/ca.crt
-          - /etc/tls/tls.crt
-          - /etc/tls/ca.crt
-          - /etc/certs/tls.crt
-          - /etc/certs/server.crt
-          - /etc/certs/ca.crt
-          - /var/run/secrets/tls/tls.crt
-          - /var/run/secrets/tls/ca.crt
+          - /etc/ssl/postfix/*
+          - /etc/tls/*
+          - /etc/certs/*
+          - /var/run/secrets/tls/*
 
     metrics:
       enabled: true

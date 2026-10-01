@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/sirajudheenam/kcert-checker/internal/config"
 
@@ -87,7 +88,10 @@ func buildKubeconfigConfig(
 	var kubeconfigPath string
 
 	if v := os.Getenv("KUBECONFIG"); v != "" {
-		kubeconfigPath = v
+		// Some tools (e.g. u8s) write KUBECONFIG with shell-escaped spaces
+		// ("Application\\ Support"). Strip the backslash-escapes so the path
+		// is interpretable by the filesystem.
+		kubeconfigPath = strings.ReplaceAll(v, `\ `, " ")
 		log.Printf("kubeconfig: using KUBECONFIG env variable %q", kubeconfigPath)
 	}
 
@@ -107,12 +111,27 @@ func buildKubeconfigConfig(
 		log.Printf("kubeconfig: using default path %q", kubeconfigPath)
 	}
 
-	if _, err := os.Stat(kubeconfigPath); err != nil {
-		return nil, fmt.Errorf("kubeconfig %q not accessible: %w", kubeconfigPath, err)
+	// KUBECONFIG may be a colon-separated list of paths (standard kubectl
+	// behaviour). When it is, delegate path resolution entirely to client-go's
+	// ClientConfigLoadingRules which understands the list format. Only do the
+	// single-path os.Stat check when we have an unambiguous single file.
+	isMultiPath := strings.Contains(kubeconfigPath, string(filepath.ListSeparator))
+
+	if !isMultiPath {
+		if _, err := os.Stat(kubeconfigPath); err != nil {
+			return nil, fmt.Errorf("kubeconfig %q not accessible: %w", kubeconfigPath, err)
+		}
 	}
 
-	loadingRules := &clientcmd.ClientConfigLoadingRules{
-		ExplicitPath: kubeconfigPath,
+	var loadingRules *clientcmd.ClientConfigLoadingRules
+	if isMultiPath {
+		// Let client-go split and merge the list, same as kubectl does.
+		loadingRules = clientcmd.NewDefaultClientConfigLoadingRules()
+		loadingRules.Precedence = filepath.SplitList(kubeconfigPath)
+	} else {
+		loadingRules = &clientcmd.ClientConfigLoadingRules{
+			ExplicitPath: kubeconfigPath,
+		}
 	}
 
 	overrides := &clientcmd.ConfigOverrides{}
