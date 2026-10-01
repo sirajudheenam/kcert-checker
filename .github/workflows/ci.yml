@@ -91,7 +91,7 @@ jobs:
             -tags integration \
             ./tests/integration/...
         env:
-          KUBECONFIG: ${{ env.HOME }}/.kube/config
+          KUBECONFIG: /home/runner/.kube/config
           KCERT_INTEGRATION_CLUSTER: kcert-ci
 
       - name: Delete kind cluster
