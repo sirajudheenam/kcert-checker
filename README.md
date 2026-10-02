@@ -9,7 +9,7 @@ A Kubernetes-native certificate expiry checker. It scans every running Pod conta
 ```
 kcert-checker pod
   ├── On startup: scan all namespaces
-  ├── Every N hours (default 24): scan again
+  ├── Every N hours (default 1): scan again
   │
   ├── For each Pod container:
   │     exec cat <path> inside the container (via pods/exec SPDY)
@@ -50,21 +50,56 @@ kcert-checker/
 │       ├── scanner.go              # scan loop (secrets + pods)
 │       ├── container.go            # exec cat via SPDY
 │       └── certificate.go          # PEM → x509 parsing
-├── deploy/                         # raw kubectl manifests
-├── helm/kcert-checker/             # Helm chart (preferred)
+├── deploy/                         # raw kubectl manifests (reference)
+├── helm/kcert-checker/             # Helm chart (preferred deployment method)
 │   ├── Chart.yaml
 │   ├── values.yaml
 │   └── templates/
 ├── alerts/
 │   ├── certificate-alerts.yaml     # standalone PrometheusRule (optional)
 │   └── prometheus-kcert-values.yaml
-├── prometheus-kcert-values.yaml    # Helm values to wire Prometheus scrape + alerts
+├── scripts/
+│   ├── helm-publish.sh             # manual chart publish to gh-pages
+│   └── gen-test-certs.sh
 ├── test-certs-deploy/
 │   └── kcert-test-pod.yaml         # test pod covering all 5 alert tiers
 ├── Dockerfile
 ├── COMMANDS.md                     # full command reference
 └── SETUP.md                        # end-to-end setup guide (kind → running alerts)
 ```
+
+---
+
+## Installing from the published Helm chart
+
+The chart is published to GitHub Pages. This is the recommended install method for real clusters.
+
+```bash
+helm repo add kcert-checker https://sirajudheenam.github.io/kcert-checker
+helm repo update
+
+# Install with defaults (Docker Hub image, ServiceMonitor disabled)
+helm install kcert-checker kcert-checker/kcert-checker \
+  --namespace monitoring \
+  --create-namespace
+
+# Install with kube-prometheus-stack (Prometheus Operator)
+helm install kcert-checker kcert-checker/kcert-checker \
+  --namespace monitoring \
+  --create-namespace \
+  --set serviceMonitor.enabled=true
+
+# Install a specific chart version
+helm install kcert-checker kcert-checker/kcert-checker \
+  --namespace monitoring \
+  --create-namespace \
+  --version 0.1.0
+
+# Upgrade to latest chart
+helm upgrade kcert-checker kcert-checker/kcert-checker -n monitoring
+```
+
+See [`helm/kcert-checker/values.yaml`](helm/kcert-checker/values.yaml) for all configurable options, or [`helm/README.md`](helm/README.md) for full chart documentation.
 
 ---
 
@@ -77,17 +112,13 @@ For every individual command used in this project, see **[COMMANDS.md](COMMANDS.
 ### 1. Prerequisites
 
 ```bash
-# Install tools (macOS)
 brew install go docker kind kubectl helm
 ```
 
-### 2. Build the image
+### 2. Build and load the image
 
 ```bash
-# Build for your local architecture
 docker build -t kcert-checker:local .
-
-# Load into kind (no registry needed)
 kind load docker-image kcert-checker:local
 ```
 
@@ -106,7 +137,6 @@ helm install kcert-checker ./helm/kcert-checker \
 ### 4. Wire Prometheus
 
 ```bash
-# Install Prometheus (if not already present)
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 helm install prometheus prometheus-community/prometheus -n monitoring
@@ -124,29 +154,26 @@ curl -s -XPOST http://localhost:9092/-/reload
 ### 5. Verify
 
 ```bash
-# Check metrics directly
+# Check metrics
 kubectl port-forward -n monitoring svc/kcert-checker 9091:8080
 curl http://localhost:9091/metrics | grep kcert
 
-# Check Prometheus targets (should show job=kcert-checker health=up)
+# Check Prometheus targets (Status → Targets, look for job=kcert-checker, health=up)
 kubectl port-forward -n monitoring svc/prometheus-server 9090:80
-# Open http://localhost:9090 → Status → Targets
 ```
 
 ---
 
-## Deploying to a real cluster
-
-Use the Helm chart with a real image from a registry:
+## Deploying to a real cluster (from source)
 
 ```bash
-# Build and push (cross-platform for amd64 clusters)
+# Build and push a multi-arch image
 docker buildx build \
   --platform linux/amd64 \
   -t sirajudheenam/kcert-checker:latest \
   --push .
 
-# Deploy
+# Deploy using local chart
 helm install kcert-checker ./helm/kcert-checker \
   --namespace monitoring \
   --create-namespace \
@@ -156,18 +183,48 @@ helm install kcert-checker ./helm/kcert-checker \
 
 ---
 
+## Releasing a new chart version
+
+The chart is versioned independently of the application image. Releases are driven by a `helm/v*` git tag which triggers the [helm-release](.github/workflows/helm-release.yml) GitHub Actions workflow — it packages the chart with `chart-releaser` and publishes it to the `gh-pages` branch.
+
+```bash
+# Bump chart version, commit, tag, and push — CI does the rest
+make helm-release VERSION=0.2.0
+
+# Test the package locally before tagging (no push)
+make helm-dry-run
+```
+
+The `helm-release` Make target:
+1. Bumps `version:` in `helm/kcert-checker/Chart.yaml`
+2. Commits and pushes to `main`
+3. Pushes the `helm/v<VERSION>` tag → GitHub Actions packages and publishes
+
+**One-time GitHub Pages setup** (new fork or fresh repo):
+```bash
+# Create the gh-pages branch
+git checkout --orphan gh-pages
+git reset --hard
+git commit --allow-empty -m "init gh-pages"
+git push origin gh-pages
+git checkout main
+```
+Then in GitHub **Settings → Pages → Source**: Branch = `gh-pages` / root.
+
+---
+
 ## Certificate paths scanned
 
 The scanner checks these paths inside every container (missing paths are silently skipped):
 
 ```
-/etc/ssl/postfix/tls.crt    /etc/ssl/postfix/ca.crt
-/etc/tls/tls.crt            /etc/tls/ca.crt
-/etc/certs/tls.crt          /etc/certs/server.crt    /etc/certs/ca.crt
-/var/run/secrets/tls/tls.crt  /var/run/secrets/tls/ca.crt
+/etc/ssl/postfix/*
+/etc/tls/*
+/etc/certs/*
+/var/run/secrets/tls/*
 ```
 
-To add more paths, edit `scanner.certificates.paths` in `helm/kcert-checker/values.yaml` or the ConfigMap.
+To add more paths, set `config.scanner.certificates.paths` in `values.yaml` or via `--set`.
 
 ---
 
@@ -175,125 +232,122 @@ To add more paths, edit `scanner.certificates.paths` in `helm/kcert-checker/valu
 
 ### Unit tests
 
-Run all unit tests (no cluster required):
-
 ```bash
 go test ./...
-```
 
-Run with coverage report:
-
-```bash
+# With coverage
 go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out        # open in browser
-go tool cover -func=coverage.out        # per-function summary
-```
-
-Run a specific package:
-
-```bash
-go test -v ./internal/scanner/...
-go test -v ./internal/output/...
+go tool cover -html=coverage.out
 ```
 
 ### Integration tests
 
-Integration tests run against a live Kubernetes cluster. They apply fixtures to a
-dedicated `kcert-integration` namespace and verify the scanner finds and classifies
-real certificates correctly.
-
-**Prerequisites:**
-
-- A running cluster accessible via `KUBECONFIG` (kind is fine)
-- `kubectl` in `$PATH`
-
-**1. Apply fixtures (one-time setup):**
+Integration tests run against a live cluster and verify the scanner correctly classifies real certificates at all expiry tiers.
 
 ```bash
-kubectl apply -f tests/integration/fixtures/
-```
-
-This creates:
-- `kcert-integration` namespace
-- 4 Secrets with real PEM certs at different expiry tiers (expired, critical, warning, healthy)
-- A Pod with 7 containers each mounting a cert at a known path
-
-**2. Run integration tests:**
-
-```bash
-go test -v -count=1 -tags integration -timeout 5m ./tests/integration/...
-```
-
-Or via Make:
-
-```bash
-# Spin up a fresh kind cluster, apply fixtures, run tests, tear down
+# Spin up a fresh kind cluster, run tests, tear it down
 make integration-test
 
-# Run against your already-running cluster (skip kind lifecycle)
+# Run against your already-running cluster
 make integration-test-existing
 ```
 
-**3. Tear down fixtures (optional):**
+### Manual end-to-end test
 
-```bash
-kubectl delete namespace kcert-integration
-```
+Four demo secrets are pre-loaded covering all status tiers:
 
-### Manual end-to-end test (demo secrets)
-
-The `monitoring` namespace has four demo secrets pre-loaded covering all status tiers:
-
-| Secret | Subject | Status |
-|---|---|---|
-| `monitoring-ca` | `monitoring-ca` | OK (~5 years) |
-| `monitoring-api-tls` | `api.monitoring.svc` | OK (~400 days) |
-| `monitoring-grafana-tls` | `grafana.monitoring.svc` | WARNING (~20 days) |
-| `monitoring-alertmanager-tls` | `alertmanager.monitoring.svc` | CRITICAL (~5 days) |
-
-To re-apply them if they are deleted:
+| Secret | Status |
+|---|---|
+| `monitoring-ca` | OK (~5 years) |
+| `monitoring-api-tls` | OK (~400 days) |
+| `monitoring-grafana-tls` | WARNING (~20 days) |
+| `monitoring-alertmanager-tls` | CRITICAL (~5 days) |
 
 ```bash
 kubectl apply -f test-certs-deploy/monitoring-demo-secrets.yaml
-```
 
-Run a one-shot scan to see all certs in both tables:
-
-```bash
 go build -o kcert-checker ./cmd/kcert-checker
 ./kcert-checker --config config.yaml --output table --once
-```
-
-Expected output (Secrets section):
-
-```
-=== Kubernetes Secrets ===
-STATUS    NAMESPACE   SOURCE NAME                          SUBJECT                      ISSUER         EXPIRES     DAYS LEFT
-------    ---------   -----------                          -------                      ------         -------     ---------
-CRITICAL  monitoring  monitoring-alertmanager-tls/tls.crt  alertmanager.monitoring.svc  monitoring-ca  ...         4
-OK        monitoring  monitoring-api-tls/tls.crt           api.monitoring.svc           monitoring-ca  ...         399
-OK        monitoring  monitoring-ca/ca.crt                 monitoring-ca                monitoring-ca  ...         1824
-WARNING   monitoring  monitoring-grafana-tls/tls.crt       grafana.monitoring.svc       monitoring-ca  ...         19
 ```
 
 ---
 
 ## Known issues / gotchas
 
-| Issue                                   | Root cause                                                                               | Fix                                                                    |
-| --------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `ImagePullBackOff` on Apple Silicon     | No arm64 image on DockerHub                                                              | Build locally + `kind load docker-image`                               |
-| `CreateContainerConfigError`            | `runAsNonRoot: true` rejects string usernames                                            | Set `runAsUser: 65532` (numeric UID)                                   |
-| Config file not found                   | Volume mounted at `/etc/kcert` but `--config` points to `/etc/kcert-checker/config.yaml` | Fixed in Helm chart; patch raw deploy with `kubectl patch`             |
-| kcert-checker not scraped by Prometheus | `endpointslice` SD doesn't expose `__meta_kubernetes_service_name`                       | Use `__meta_kubernetes_endpointslice_label_kubernetes_io_service_name` |
+| Issue | Root cause | Fix |
+| --- | --- | --- |
+| `ImagePullBackOff` on Apple Silicon | No arm64 image on DockerHub | Build locally + `kind load docker-image` |
+| `CreateContainerConfigError` | `runAsNonRoot: true` rejects string usernames | Set `runAsUser: 65532` (numeric UID) |
+| Config file not found | Volume mounted at `/etc/kcert` but `--config` points to `/etc/kcert-checker/config.yaml` | Fixed in Helm chart; patch raw deploy with `kubectl patch` |
+| Not scraped by Prometheus | `endpointslice` SD doesn't expose `__meta_kubernetes_service_name` | Use `__meta_kubernetes_endpointslice_label_kubernetes_io_service_name` |
 
 See COMMANDS.md §11 for the full list with patch commands.
 
 ---
 
-## From Scratch
+## Two-repo architecture and syncing
 
-```bash
-# mkdir -p kcert-checker/{bin,cmd,internal,scripts,helm,k8s,test-certs-deploy}
+This is the **public canonical source**. A separate internal downstream repo imports it as a Go module and adds organisation-specific configuration (Dockerfile, Helm values, deploy pipelines). The two repos are kept in sync manually when changes land here.
+
+### Relationship
 
 ```
+github.com/sirajudheenam/kcert-checker   ← this repo (canonical Go source)
+        │
+        │  go replace directive (local path, dev only)
+        │  rsync for non-Go assets (alerts/, deploy/, ui/, helm/templates/)
+        ▼
+internal/cronus/kcert-checker            ← downstream (SAP-specific config)
+```
+
+The downstream `go.mod` contains:
+
+```
+require github.com/sirajudheenam/kcert-checker v0.0.0
+replace github.com/sirajudheenam/kcert-checker => ../../../github/sirajudheenam/kcert-checker
+```
+
+This means the downstream builds directly against the local checkout of this repo — no vendoring or tagging needed during development. Remove the `replace` line and bump to a real tagged version when publishing a release.
+
+### What gets synced vs. what stays separate
+
+| Path | Synced to downstream? | Notes |
+|---|---|---|
+| `cmd/`, `internal/`, `app/` | No — accessed via `replace` | Go source is shared at build time, not copied |
+| `alerts/` | Yes | Prometheus rules are identical |
+| `deploy/gateway/` | Yes | Gateway API manifests |
+| `helm/kcert-checker/templates/` | Yes | Chart templates (values.yaml differs) |
+| `test-certs-deploy/` | Yes | Demo cert manifests |
+| `ui/` | Yes | Frontend (excluding node_modules/.next) |
+| `Dockerfile` | No | Downstream uses a different base image |
+| `helm/values.yaml` | No | Downstream has SAP-specific image registry and config |
+| `config.yaml` | No | Downstream points to internal clusters |
+| `Makefile` | No | Downstream has SAP deploy targets |
+
+### How to sync (from the downstream repo)
+
+```bash
+# Pull all non-Go changes from the public repo into the downstream
+cd ~/workdir/internal/cronus/kcert-checker
+make sync-from-public
+
+# Review what changed
+git diff
+
+# Commit and push
+git add -p
+git commit -m "sync: pull latest from public kcert-checker"
+git push
+```
+
+`sync-from-public` warns if the public repo has uncommitted changes and skips SAP-specific files automatically.
+
+### When to sync
+
+Sync after any of these land in the public repo:
+- Changes to `alerts/` (Prometheus rules or alert thresholds)
+- Changes to `helm/kcert-checker/templates/` (new chart features)
+- UI changes in `ui/`
+- New test fixtures in `test-certs-deploy/`
+
+Go source changes (`cmd/`, `internal/`, `app/`) are picked up automatically at build time via the `replace` directive — no explicit sync step needed.
