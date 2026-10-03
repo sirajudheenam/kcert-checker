@@ -34,12 +34,14 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -o $(BUILD_DIR)/$(BINARY) ./cmd/kcert-checker
 
+## Build and push arm64 image (Apple Silicon / kind local dev)
 docker-build-arm64:
 	$(DOCKER) buildx build \
   		--platform linux/arm64 \
   		-t sirajudheenam/kcert-checker:local \
 		-f ./Dockerfile.local --push .
-  		
+
+## Build and push amd64 image (Linux CI / real clusters)
 docker-build-amd64:
 	$(DOCKER) buildx build \
   		--platform linux/amd64 \
@@ -59,9 +61,7 @@ vet:
 ## Run all checks (vet + unit tests)
 check: vet test
 
-## Regenerate tests/integration/fixtures/01-secrets.yaml with Go-compatible P-256 certs
-## Required on macOS (LibreSSL emits explicit EC params; Go rejects them).
-## Run this whenever cert expiry windows drift or after a fresh clone.
+## Regenerate integration fixture certs (required on macOS — LibreSSL emits explicit EC params)
 gen-test-certs:
 	./scripts/gen-test-certs.sh
 
@@ -192,6 +192,60 @@ grafana-port-forward:
 perses-port-forward:
 	$(KUBECTL) port-forward svc/$(HELM_PERSES_RELEASE) 8080:8080 -n $(MONITORING_NS)
 
-## Show help
+# ── Helm chart packaging and publishing ───────────────────────────────────────
+HELM_CHART_DIR := helm/kcert-checker
+HELM_PAGES_URL := https://sirajudheenam.github.io/kcert-checker
+
+## Lint the Helm chart
+helm-lint:
+	helm lint $(HELM_CHART_DIR)
+
+## Render chart templates to stdout (dry-run)
+helm-template:
+	helm template kcert-checker $(HELM_CHART_DIR) --namespace monitoring
+
+## Package chart into .helm-packages/ (bump Chart.yaml version first)
+helm-package: helm-lint
+	@mkdir -p .helm-packages
+	helm package $(HELM_CHART_DIR) --destination .helm-packages
+	@echo "==> Packaged: $$(ls .helm-packages/kcert-checker-*.tgz | tail -1)"
+
+## Dry-run publish: lint + package, no push (safe to run anytime)
+helm-dry-run: helm-package
+	@echo "==> Dry run complete. Package in .helm-packages/ — nothing pushed."
+
+## Publish chart to GitHub Pages manually (CI publishes automatically on helm/v* tag)
+helm-publish:
+	./scripts/helm-publish.sh
+
+## Tag and push a chart release — triggers GitHub Actions: make helm-release VERSION=0.2.0
+helm-release:
+	@if [ -z "$(VERSION)" ]; then echo "ERROR: VERSION= is required (e.g. make helm-release VERSION=0.2.0)"; exit 1; fi
+	@sed -i '' "s/^version: .*/version: $(VERSION)/" $(HELM_CHART_DIR)/Chart.yaml
+	@echo "==> Chart.yaml version bumped to $(VERSION)"
+	git add $(HELM_CHART_DIR)/Chart.yaml
+	git commit -m "chore: bump helm chart version to $(VERSION)"
+	git tag helm/v$(VERSION)
+	git push origin main helm/v$(VERSION)
+	@echo "==> Tag helm/v$(VERSION) pushed — GitHub Actions will publish the chart."
+	@echo "    Watch: https://github.com/sirajudheenam/kcert-checker/actions"
+
+## Show this help
 help:
-	@grep -E '^##' Makefile | sed 's/^## //'
+	@printf "\nUsage: make <target>\n"
+	@printf "\nBuild & test\n"
+	@awk '/^## /{desc=substr($$0,4);next} /^[a-zA-Z0-9_-]+:/{split($$1,a,":");if(desc){printf "  %-34s %s\n",a[1],desc};desc=""}' Makefile \
+	  | grep -E '  (build|test|vet|check|gen-test-certs|clean) ' || true
+	@printf "\nDocker images\n"
+	@awk '/^## /{desc=substr($$0,4);next} /^[a-zA-Z0-9_-]+:/{split($$1,a,":");if(desc){printf "  %-34s %s\n",a[1],desc};desc=""}' Makefile \
+	  | grep -E '  docker-' || true
+	@printf "\nIntegration tests\n"
+	@awk '/^## /{desc=substr($$0,4);next} /^[a-zA-Z0-9_-]+:/{split($$1,a,":");if(desc){printf "  %-34s %s\n",a[1],desc};desc=""}' Makefile \
+	  | grep -E '  integration-' || true
+	@printf "\nMonitoring stack (Prometheus + Grafana + Perses)\n"
+	@awk '/^## /{desc=substr($$0,4);next} /^[a-zA-Z0-9_-]+:/{split($$1,a,":");if(desc){printf "  %-34s %s\n",a[1],desc};desc=""}' Makefile \
+	  | grep -E '  (monitoring|prometheus|grafana|perses)-' || true
+	@printf "\nHelm chart\n"
+	@awk '/^## /{desc=substr($$0,4);next} /^[a-zA-Z0-9_-]+:/{split($$1,a,":");if(desc){printf "  %-34s %s\n",a[1],desc};desc=""}' Makefile \
+	  | grep -E '  helm-' || true
+	@printf "\n"

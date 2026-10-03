@@ -1,6 +1,29 @@
 # kcert-checker
 
-A Kubernetes-native certificate expiry checker. It scans every running Pod container and every Secret cluster-wide, parses PEM certificates found at known paths, and exposes their `NotAfter` timestamps as Prometheus metrics. Alert rules fire at 7, 30, 60, and 90 days before expiry.
+A Kubernetes-native certificate expiry checker. Scans every running pod container and every Secret cluster-wide, parses PEM certificates, and exposes expiry timestamps as Prometheus metrics. Alert rules fire at 7, 30, 60, and 90 days before expiry.
+
+---
+
+## Table of contents
+
+1. [How it works](#how-it-works)
+2. [Repository layout](#repository-layout)
+3. [Prerequisites](#prerequisites)
+4. [Quick start — local kind cluster](#quick-start--local-kind-cluster)
+5. [Building the image](#building-the-image)
+6. [Deploying kcert-checker](#deploying-kcert-checker)
+   - [Helm (recommended)](#helm-recommended)
+   - [Raw kubectl manifests](#raw-kubectl-manifests)
+7. [Installing from the published Helm chart](#installing-from-the-published-helm-chart)
+8. [Wiring Prometheus](#wiring-prometheus)
+9. [Monitoring stack — Grafana + Perses](#monitoring-stack--grafana--perses)
+10. [Verifying the deployment](#verifying-the-deployment)
+11. [Testing](#testing)
+12. [Helm chart development](#helm-chart-development)
+13. [Configuration reference](#configuration-reference)
+14. [Makefile reference](#makefile-reference)
+15. [Troubleshooting](#troubleshooting)
+16. [Two-repo architecture and syncing](#two-repo-architecture-and-syncing)
 
 ---
 
@@ -20,20 +43,24 @@ kcert-checker pod
   │     parse PEM → extract NotAfter
   │
   └── Expose Prometheus metrics on :8080/metrics
-        kcert_certificate_expiry_timestamp_seconds{namespace,pod,container,path,source}
+        kcert_certificate_expiry_timestamp_seconds{namespace,source_type,source_name,
+            subject_common_name,issuer_common_name,path,container}
+        kcert_certificates_total
+        kcert_certificates_expired_total
         kcert_scan_timestamp_seconds
+        kcert_scan_duration_seconds
         kcert_scan_errors_total
 ```
 
-Prometheus scrapes the metrics endpoint and evaluates five alert rules:
+Prometheus scrapes the metrics endpoint and evaluates alert rules:
 
-| Alert                                 | Condition        | Severity |
-| ------------------------------------- | ---------------- | -------- |
-| `KCertCertificateExpired`             | `NotAfter ≤ now` | critical |
-| `KCertCertificateExpiresWithin7Days`  | `0 < days ≤ 7`   | critical |
-| `KCertCertificateExpiresWithin30Days` | `7 < days ≤ 30`  | warning  |
-| `KCertCertificateExpiresWithin60Days` | `30 < days ≤ 60` | warning  |
-| `KCertCertificateExpiresWithin90Days` | `60 < days ≤ 90` | warning  |
+| Alert | Condition | Severity |
+|---|---|---|
+| `KCertCertificateExpired` | `NotAfter ≤ now` | critical |
+| `KCertCertificateExpiresWithin7Days` | `0 < days ≤ 7` | critical |
+| `KCertCertificateExpiresWithin30Days` | `7 < days ≤ 30` | warning |
+| `KCertCertificateExpiresWithin60Days` | `30 < days ≤ 60` | warning |
+| `KCertCertificateExpiresWithin90Days` | `60 < days ≤ 90` | warning |
 
 ---
 
@@ -41,190 +68,412 @@ Prometheus scrapes the metrics endpoint and evaluates five alert rules:
 
 ```
 kcert-checker/
-├── cmd/kcert-checker/main.go       # entry point
+├── cmd/kcert-checker/main.go           # entry point
+├── app/app.go                          # Run(Options) — public surface for downstream import
 ├── internal/
-│   ├── config/config.go            # config structs + YAML loading
-│   ├── kubernetes/                 # k8s client, pod/namespace listing
-│   ├── metrics/metrics.go          # Prometheus gauge/counter definitions
-│   └── scanner/                    # certificate scanning logic
-│       ├── scanner.go              # scan loop (secrets + pods)
-│       ├── container.go            # exec cat via SPDY
-│       └── certificate.go          # PEM → x509 parsing
-├── deploy/                         # raw kubectl manifests (reference)
-├── helm/kcert-checker/             # Helm chart (preferred deployment method)
+│   ├── config/                         # config structs + YAML loading
+│   ├── kubernetes/                     # k8s client, pod/namespace listing
+│   ├── metrics/                        # Prometheus gauge/counter definitions
+│   └── scanner/                        # certificate scanning logic
+│       ├── scanner.go                  # scan loop (secrets + pods)
+│       ├── container.go                # exec cat via SPDY
+│       └── certificate.go             # PEM → x509 parsing
+├── tests/integration/                  # integration test suite (build tag: integration)
+│   └── fixtures/                       # k8s manifests: secrets + pod covering all expiry tiers
+├── scripts/
+│   ├── gen-test-certs.sh               # regenerate fixture certs (macOS-safe P-256)
+│   └── helm-publish.sh                 # manual gh-pages chart publish
+├── deploy/                             # raw kubectl manifests (reference; Helm preferred)
+├── helm/kcert-checker/                 # Helm chart
 │   ├── Chart.yaml
 │   ├── values.yaml
 │   └── templates/
 ├── alerts/
-│   ├── certificate-alerts.yaml     # standalone PrometheusRule (optional)
-│   └── prometheus-kcert-values.yaml
-├── scripts/
-│   ├── helm-publish.sh             # manual chart publish to gh-pages
-│   └── gen-test-certs.sh
-├── test-certs-deploy/
-│   └── kcert-test-pod.yaml         # test pod covering all 5 alert tiers
-├── Dockerfile
-├── COMMANDS.md                     # full command reference
-└── SETUP.md                        # end-to-end setup guide (kind → running alerts)
+│   ├── certificate-alerts.yaml         # standalone PrometheusRule (no Helm)
+│   └── prometheus-kcert-values.yaml    # Helm values: scrape job + alert rules
+├── deploy/grafana/                     # Grafana helm values + dashboard ConfigMap
+├── deploy/perses/                      # Perses helm values + provisioning ConfigMap
+├── test-certs-deploy/                  # demo manifests covering all 5 alert tiers
+├── config.yaml                         # local run config (kubeconfig mode)
+├── Dockerfile                          # production image (linux/amd64)
+├── Dockerfile.local                    # local dev image (linux/arm64)
+└── Makefile                            # all common tasks (run: make help)
+```
+
+---
+
+## Prerequisites
+
+### Tools (macOS)
+
+```bash
+brew install go docker kind kubectl helm
+```
+
+Verify:
+
+```bash
+go version          # 1.21+
+kind --version      # 0.33+
+kubectl version --client
+helm version        # 3.x
+```
+
+### Docker must be running
+
+```bash
+docker info         # must return without error
+```
+
+---
+
+## Quick start — local kind cluster
+
+This gets kcert-checker running with Prometheus alerts in ~10 minutes.
+
+### 1. Create a kind cluster
+
+```bash
+kind create cluster --name kind
+kubectl cluster-info --context kind-kind
+kubectl get nodes
+```
+
+Expected:
+```
+NAME                 STATUS   ROLES           AGE   VERSION
+kind-control-plane   Ready    control-plane   30s   v1.37.x
+```
+
+### 2. Build and load the image
+
+```bash
+# Build for your Mac's architecture
+docker build -t kcert-checker:local .
+
+# Load into kind (bypasses registry entirely)
+kind load docker-image kcert-checker:local
+```
+
+Verify it loaded:
+```bash
+docker exec kind-control-plane crictl images | grep kcert
+```
+
+### 3. Deploy kcert-checker + Prometheus
+
+```bash
+# Install Prometheus with kcert scrape config and alert rules
+make prometheus-up
+
+# Install kcert-checker (local image, kind cluster)
+helm install kcert-checker ./helm/kcert-checker \
+  --namespace monitoring \
+  --create-namespace \
+  --set image.repository=kcert-checker \
+  --set image.tag=local \
+  --set image.pullPolicy=Never
+
+# Wait for both to be ready
+kubectl rollout status deployment/prometheus-server -n monitoring
+kubectl rollout status deployment/kcert-checker -n monitoring
+```
+
+### 4. Verify metrics are flowing
+
+```bash
+# Port-forward kcert-checker metrics
+kubectl port-forward svc/kcert-checker 8080:8080 -n monitoring &
+curl -s http://localhost:8080/metrics | grep kcert_certificate
+```
+
+### 5. Open Prometheus UI
+
+```bash
+make prometheus-port-forward
+# Open http://localhost:9090
+# Status → Targets: look for job=kcert-checker with state UP
+# Alerts: expand kcert-certificate-expiry group
+```
+
+---
+
+## Building the image
+
+### Apple Silicon (arm64) — kind / local dev
+
+```bash
+# Option A: simple local build (no push)
+docker build -t kcert-checker:local .
+kind load docker-image kcert-checker:local
+
+# Option B: build and push to DockerHub (arm64)
+make docker-build-arm64
+```
+
+### Linux clusters (amd64)
+
+```bash
+# Build and push to DockerHub (amd64)
+make docker-build-amd64
+
+# Or cross-compile from Apple Silicon
+docker buildx build \
+  --platform linux/amd64 \
+  -t sirajudheenam/kcert-checker:latest \
+  --push .
+```
+
+---
+
+## Deploying kcert-checker
+
+### Helm (recommended)
+
+```bash
+# Install (kind — local image)
+helm install kcert-checker ./helm/kcert-checker \
+  --namespace monitoring \
+  --create-namespace \
+  --set image.repository=kcert-checker \
+  --set image.tag=local \
+  --set image.pullPolicy=Never
+
+# Install (real cluster — DockerHub image)
+helm install kcert-checker ./helm/kcert-checker \
+  --namespace monitoring \
+  --create-namespace
+
+# Upgrade after config changes
+helm upgrade kcert-checker ./helm/kcert-checker -n monitoring
+
+# Dry-run / template preview
+helm lint ./helm/kcert-checker
+helm template kcert-checker ./helm/kcert-checker --namespace monitoring
+
+# Uninstall
+helm uninstall kcert-checker -n monitoring
+```
+
+### Raw kubectl manifests
+
+```bash
+kubectl create namespace monitoring
+kubectl apply -f deploy/serviceaccount.yaml
+kubectl apply -f deploy/clusterrole.yaml
+kubectl apply -f deploy/clusterrolebinding.yaml
+kubectl apply -f deploy/configmap.yaml
+kubectl apply -f deploy/deployment.yaml
+kubectl apply -f deploy/service.yaml
+
+# For kind: switch to local image
+kubectl set image deployment/kcert-checker \
+  kcert-checker=kcert-checker:local -n monitoring
+kubectl patch deployment kcert-checker -n monitoring \
+  -p '{"spec":{"template":{"spec":{"containers":[{"name":"kcert-checker","imagePullPolicy":"Never"}]}}}}'
+```
+
+> **Note:** `deploy/servicemonitor.yaml` requires the Prometheus Operator CRD
+> (`monitoring.coreos.com/v1`). Skip it unless using `kube-prometheus-stack`.
+
+### Verify the deployment
+
+```bash
+kubectl get pods -n monitoring | grep kcert
+kubectl logs -n monitoring deployment/kcert-checker
+
+# Health and metrics endpoints
+kubectl port-forward svc/kcert-checker 8080:8080 -n monitoring
+curl -s http://localhost:8080/healthz
+curl -s http://localhost:8080/readyz
+curl -s http://localhost:8080/metrics | grep kcert_scan
+```
+
+Expected log output:
+```
+Starting kcert-checker
+Scanning namespace: monitoring
+Certificate found: pod=... container=... path=...
+Scan complete
+```
+
+### Trigger an immediate scan
+
+kcert-checker scans on startup, then every `scan.interval_seconds` (default 3600). Force one:
+
+```bash
+kubectl rollout restart deployment/kcert-checker -n monitoring
+kubectl rollout status deployment/kcert-checker -n monitoring
 ```
 
 ---
 
 ## Installing from the published Helm chart
 
-The chart is published to GitHub Pages. This is the recommended install method for real clusters.
+The chart is published to GitHub Pages automatically when a `helm/v*` tag is pushed.
 
 ```bash
 helm repo add kcert-checker https://sirajudheenam.github.io/kcert-checker
 helm repo update
 
-# Install with defaults (Docker Hub image, ServiceMonitor disabled)
+# Install latest
 helm install kcert-checker kcert-checker/kcert-checker \
   --namespace monitoring \
   --create-namespace
 
-# Install with kube-prometheus-stack (Prometheus Operator)
-helm install kcert-checker kcert-checker/kcert-checker \
-  --namespace monitoring \
-  --create-namespace \
-  --set serviceMonitor.enabled=true
-
-# Install a specific chart version
-helm install kcert-checker kcert-checker/kcert-checker \
-  --namespace monitoring \
-  --create-namespace \
-  --version 0.1.0
-
-# Upgrade to latest chart
-helm upgrade kcert-checker kcert-checker/kcert-checker -n monitoring
+# Show available versions
+helm search repo kcert-checker --versions
 ```
-
-See [`helm/kcert-checker/values.yaml`](helm/kcert-checker/values.yaml) for all configurable options, or [`helm/README.md`](helm/README.md) for full chart documentation.
 
 ---
 
-## Quick start (local kind cluster)
+## Wiring Prometheus
 
-For the full step-by-step guide including kind setup, image loading, Prometheus wiring, and alert verification, see **[SETUP.md](SETUP.md)**.
-
-For every individual command used in this project, see **[COMMANDS.md](COMMANDS.md)**.
-
-### 1. Prerequisites
+`alerts/prometheus-kcert-values.yaml` contains a scrape job and all five alert rules.
 
 ```bash
-brew install go docker kind kubectl helm
-```
+# Install Prometheus with kcert config baked in
+make prometheus-up
 
-### 2. Build and load the image
-
-```bash
-docker build -t kcert-checker:local .
-kind load docker-image kcert-checker:local
-```
-
-### 3. Deploy with Helm
-
-```bash
-kubectl create namespace monitoring
-
-helm install kcert-checker ./helm/kcert-checker \
-  --namespace monitoring \
-  --set image.repository=kcert-checker \
-  --set image.tag=local \
-  --set image.pullPolicy=Never
-```
-
-### 4. Wire Prometheus
-
-```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
-helm install prometheus prometheus-community/prometheus -n monitoring
-
-# Add kcert scrape job + alert rules
+# Or upgrade an existing Prometheus installation
 helm upgrade prometheus prometheus-community/prometheus \
-  -n monitoring \
-  -f prometheus-kcert-values.yaml
-
-# Trigger config reload
-kubectl port-forward -n monitoring svc/prometheus-server 9092:80 &
-curl -s -XPOST http://localhost:9092/-/reload
-```
-
-### 5. Verify
-
-```bash
-# Check metrics
-kubectl port-forward -n monitoring svc/kcert-checker 9091:8080
-curl http://localhost:9091/metrics | grep kcert
-
-# Check Prometheus targets (Status → Targets, look for job=kcert-checker, health=up)
-kubectl port-forward -n monitoring svc/prometheus-server 9090:80
-```
-
----
-
-## Deploying to a real cluster (from source)
-
-```bash
-# Build and push a multi-arch image
-docker buildx build \
-  --platform linux/amd64 \
-  -t sirajudheenam/kcert-checker:latest \
-  --push .
-
-# Deploy using local chart
-helm install kcert-checker ./helm/kcert-checker \
   --namespace monitoring \
-  --create-namespace \
-  --set image.repository=sirajudheenam/kcert-checker \
-  --set image.tag=latest
+  -f alerts/prometheus-kcert-values.yaml
+
+kubectl rollout status deployment/prometheus-server -n monitoring
+```
+
+### Verify scraping
+
+```bash
+kubectl port-forward -n monitoring svc/prometheus-server 9092:80 &
+sleep 2
+
+# Check kcert-checker appears as a target
+curl -s http://localhost:9092/api/v1/targets | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for t in d['data']['activeTargets']:
+    job = t.get('labels', {}).get('job', '')
+    if 'kcert' in job:
+        print(job, '->', t.get('health'), '|', t.get('scrapeUrl'))
+        if t.get('lastError'): print('  ERROR:', t['lastError'])
+"
+```
+
+Expected: `kcert-checker -> up | http://10.244.0.x:8080/metrics`
+
+### Useful PromQL expressions
+
+```promql
+# Days until expiry for all certs (positive = not yet expired)
+(kcert_certificate_expiry_timestamp_seconds - time()) / 86400
+
+# Certs expiring within 7 days
+(kcert_certificate_expiry_timestamp_seconds - time()) / 86400 < 7
+
+# Hours since last scan
+(time() - kcert_scan_timestamp_seconds) / 3600
+
+# Total scan errors
+kcert_scan_errors_total
+```
+
+### Check alerts
+
+```bash
+# Currently firing or pending
+curl -s "http://localhost:9092/api/v1/alerts" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+alerts = d['data']['alerts']
+if not alerts: print('No alerts yet (may be in 10m pending window)')
+for a in alerts:
+    print(f'[{a[\"state\"]}] {a[\"labels\"].get(\"alertname\")} severity={a[\"labels\"].get(\"severity\")}')
+    print(f'  ns={a[\"labels\"].get(\"namespace\")} source={a[\"labels\"].get(\"source_name\")}')
+"
+
+# All kcert rules and their state
+curl -s "http://localhost:9092/api/v1/rules" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for g in d['data']['groups']:
+    if 'kcert' in g['name'].lower():
+        print(f'Group: {g[\"name\"]}')
+        for r in g['rules']:
+            print(f'  [{r.get(\"state\", \"n/a\")}] {r[\"name\"]}')
+"
+```
+
+> Alert rules have `for: 10m` — wait up to 10 minutes for `pending → firing`.
+
+---
+
+## Monitoring stack — Grafana + Perses
+
+Install all three (Prometheus + Grafana + Perses) in one shot:
+
+```bash
+make monitoring-stack
+```
+
+Or individually:
+
+```bash
+make prometheus-up     # Prometheus with kcert scrape + alert rules
+make grafana-up        # Grafana with kcert dashboard (auto-provisioned via ConfigMap sidecar)
+make perses-up         # Perses with Prometheus datasource + kcert dashboard
+```
+
+### Port-forwards
+
+```bash
+make prometheus-port-forward   # http://localhost:9090
+make grafana-port-forward      # http://localhost:3000  (admin / admin)
+make perses-port-forward       # http://localhost:8080
+```
+
+### Tear down
+
+```bash
+make monitoring-stack-down
 ```
 
 ---
 
-## Releasing a new chart version
+## Verifying the deployment
 
-The chart is versioned independently of the application image. Releases are driven by a `helm/v*` git tag which triggers the [helm-release](.github/workflows/helm-release.yml) GitHub Actions workflow — it packages the chart with `chart-releaser` and publishes it to the `gh-pages` branch.
+### Demo secrets (all expiry tiers)
 
 ```bash
-# Bump chart version, commit, tag, and push — CI does the rest
-make helm-release VERSION=0.2.0
+# Apply demo secrets covering OK / WARNING / CRITICAL / EXPIRED
+kubectl apply -f test-certs-deploy/
 
-# Test the package locally before tagging (no push)
-make helm-dry-run
+# Force an immediate scan
+kubectl rollout restart deployment/kcert-checker -n monitoring
+kubectl rollout status deployment/kcert-checker -n monitoring
+
+# Check the scan found them
+kubectl logs -n monitoring deployment/kcert-checker | grep "Certificate found"
 ```
 
-The `helm-release` Make target:
-1. Bumps `version:` in `helm/kcert-checker/Chart.yaml`
-2. Commits and pushes to `main`
-3. Pushes the `helm/v<VERSION>` tag → GitHub Actions packages and publishes
+### Check certificate expiry metrics
 
-**One-time GitHub Pages setup** (new fork or fresh repo):
 ```bash
-# Create the gh-pages branch
-git checkout --orphan gh-pages
-git reset --hard
-git commit --allow-empty -m "init gh-pages"
-git push origin gh-pages
-git checkout main
+kubectl port-forward -n monitoring svc/prometheus-server 9092:80 &
+sleep 2
+
+curl -s "http://localhost:9092/api/v1/query?query=kcert_certificate_expiry_timestamp_seconds" | python3 -c "
+import sys, json, time
+d = json.load(sys.stdin)
+results = d['data']['result']
+if not results: print('(no data — trigger a scan: kubectl rollout restart deployment/kcert-checker -n monitoring)')
+for r in sorted(results, key=lambda x: float(x['value'][1])):
+    l = r['metric']
+    days = (float(r['value'][1]) - time.time()) / 86400
+    print(f'{days:+7.1f}d  {l.get(\"namespace\")}/{l.get(\"source_name\")}  CN={l.get(\"subject_common_name\")}')
+"
 ```
-Then in GitHub **Settings → Pages → Source**: Branch = `gh-pages` / root.
-
----
-
-## Certificate paths scanned
-
-The scanner checks these paths inside every container (missing paths are silently skipped):
-
-```
-/etc/ssl/postfix/*
-/etc/tls/*
-/etc/certs/*
-/var/run/secrets/tls/*
-```
-
-To add more paths, set `config.scanner.certificates.paths` in `values.yaml` or via `--set`.
 
 ---
 
@@ -233,61 +482,227 @@ To add more paths, set `config.scanner.certificates.paths` in `values.yaml` or v
 ### Unit tests
 
 ```bash
-go test ./...
+make test                           # unit tests with race detector + coverage
+make vet                            # go vet
+make check                          # vet + test
+```
 
-# With coverage
+With coverage report:
+```bash
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
 
 ### Integration tests
 
-Integration tests run against a live cluster and verify the scanner correctly classifies real certificates at all expiry tiers.
+Integration tests run against a live Kubernetes cluster and verify the scanner correctly classifies certificates at all expiry tiers (expired, critical, warning, healthy).
 
+**Against your existing cluster (fastest):**
 ```bash
-# Spin up a fresh kind cluster, run tests, tear it down
-make integration-test
-
-# Run against your already-running cluster
 make integration-test-existing
+# Applies fixtures → runs tests → deletes kcert-integration namespace
 ```
 
-### Manual end-to-end test
+**In a fresh dedicated kind cluster (CI-style):**
+```bash
+make integration-test
+# Creates kind cluster → applies fixtures → runs tests → destroys cluster
+```
 
-Four demo secrets are pre-loaded covering all status tiers:
+**Manual fixture management:**
+```bash
+make integration-fixtures-up    # apply fixtures only (leaves them running)
+make integration-fixtures-down  # delete kcert-integration namespace
+```
 
-| Secret | Status |
-|---|---|
-| `monitoring-ca` | OK (~5 years) |
-| `monitoring-api-tls` | OK (~400 days) |
-| `monitoring-grafana-tls` | WARNING (~20 days) |
-| `monitoring-alertmanager-tls` | CRITICAL (~5 days) |
+### Regenerate fixture certs (macOS only)
+
+macOS ships LibreSSL which generates EC certs with explicit curve parameters that Go's `crypto/x509` rejects. If tests report fewer certs than expected:
 
 ```bash
-kubectl apply -f test-certs-deploy/monitoring-demo-secrets.yaml
+make gen-test-certs
+# Regenerates tests/integration/fixtures/01-secrets.yaml with P-256 named-curve certs
+```
 
-go build -o kcert-checker ./cmd/kcert-checker
-./kcert-checker --config config.yaml --output table --once
+Run this after a fresh clone on macOS, or whenever fixture certs drift past their expiry windows.
+
+---
+
+## Helm chart development
+
+```bash
+# Lint
+make helm-lint
+
+# Preview rendered templates
+make helm-template
+
+# Package (bump Chart.yaml version first)
+make helm-package
+
+# Publish manually to GitHub Pages
+make helm-publish
+
+# Tag and release (triggers GitHub Actions CI)
+make helm-release VERSION=0.2.0
+```
+
+The CI workflow (`.github/workflows/helm-release.yml`) publishes automatically when a `helm/v*` tag is pushed. `make helm-release VERSION=x.y.z` does the version bump, commit, and tag push in one step.
+
+---
+
+## Configuration reference
+
+`config.yaml` (mounted as a ConfigMap in-cluster):
+
+```yaml
+kubernetes:
+  mode: "kubeconfig"           # "kubeconfig" (local) or "incluster"
+  # kubeconfig: "~/.kube/config"  # optional — defaults to ~/.kube/config
+  # context: "kind-kind"          # optional — defaults to current-context
+
+scanner:
+  namespaces:
+    exclude:
+      - kube-system
+      - kube-public
+      - kube-node-lease
+      - "openshift-*"           # glob patterns supported
+
+  certificates:
+    paths:                      # paths checked inside each container
+      - "/etc/ssl/postfix/*"
+      - "/etc/tls/*"
+      - "/etc/certs/*"
+      - "/tls/*"
+      - "/var/run/secrets/tls/*"
+
+  containers:
+    include_init_containers: false
+    exclude:
+      - istio-proxy
+      - linkerd-proxy
+      - "init-*"
+
+  pods:
+    exclude:
+      - "debug-*"
+      - "test-*"
+
+  secrets:
+    exclude:
+      - "sh.helm.release.*"
+
+metrics:
+  enabled: true
+  listen_address: "0.0.0.0:8080"
+  path: "/metrics"
+
+scan:
+  interval_seconds: 3600        # 3600 = 1 hour; 86400 = 24 hours
+  warning_days: 30
+  critical_days: 7
+```
+
+Override a single value at deploy time:
+```bash
+helm upgrade kcert-checker ./helm/kcert-checker -n monitoring \
+  --set config.scan.interval_seconds=600
+```
+
+View the running config:
+```bash
+kubectl get configmap kcert-checker-config -n monitoring \
+  -o jsonpath='{.data.config\.yaml}'
 ```
 
 ---
 
-## Known issues / gotchas
+## Makefile reference
 
-| Issue | Root cause | Fix |
-| --- | --- | --- |
-| `ImagePullBackOff` on Apple Silicon | No arm64 image on DockerHub | Build locally + `kind load docker-image` |
-| `CreateContainerConfigError` | `runAsNonRoot: true` rejects string usernames | Set `runAsUser: 65532` (numeric UID) |
-| Config file not found | Volume mounted at `/etc/kcert` but `--config` points to `/etc/kcert-checker/config.yaml` | Fixed in Helm chart; patch raw deploy with `kubectl patch` |
-| Not scraped by Prometheus | `endpointslice` SD doesn't expose `__meta_kubernetes_service_name` | Use `__meta_kubernetes_endpointslice_label_kubernetes_io_service_name` |
+```
+make help
+```
 
-See COMMANDS.md §11 for the full list with patch commands.
+All targets, grouped by category. Summary:
+
+| Group | Key targets |
+|---|---|
+| Build & test | `build`, `test`, `check`, `gen-test-certs` |
+| Docker | `docker-build-arm64`, `docker-build-amd64` |
+| Integration | `integration-test`, `integration-test-existing`, `integration-fixtures-up/down` |
+| Monitoring | `monitoring-stack`, `prometheus-up`, `grafana-up`, `perses-up`, `*-port-forward` |
+| Helm | `helm-lint`, `helm-template`, `helm-package`, `helm-release VERSION=x.y.z` |
+
+---
+
+## Troubleshooting
+
+### `ImagePullBackOff`
+
+The DockerHub image has no arm64 build. Use a locally-built image:
+
+```bash
+docker build -t kcert-checker:local .
+kind load docker-image kcert-checker:local
+kubectl set image deployment/kcert-checker kcert-checker=kcert-checker:local -n monitoring
+kubectl patch deployment kcert-checker -n monitoring \
+  -p '{"spec":{"template":{"spec":{"containers":[{"name":"kcert-checker","imagePullPolicy":"Never"}]}}}}'
+```
+
+### `CreateContainerConfigError`
+
+Kubernetes rejects a string username (`nonroot`) with `runAsNonRoot: true`. The Helm chart already sets `runAsUser: 65532`. For raw manifests, patch:
+
+```bash
+kubectl patch deployment kcert-checker -n monitoring \
+  -p '{"spec":{"template":{"spec":{"containers":[{"name":"kcert-checker","securityContext":{"runAsNonRoot":true,"runAsUser":65532,"allowPrivilegeEscalation":false,"readOnlyRootFilesystem":true}}]}}}}'
+```
+
+### Config file not found: `/etc/kcert-checker/config.yaml`
+
+The original `deploy/deployment.yaml` mounted the ConfigMap at `/etc/kcert` instead of `/etc/kcert-checker`. The Helm chart is already correct. For raw manifests:
+
+```bash
+kubectl patch deployment kcert-checker -n monitoring --type=json \
+  -p='[{"op":"replace","path":"/spec/template/spec/containers/0/volumeMounts/0","value":{"name":"config","mountPath":"/etc/kcert-checker","readOnly":true}}]'
+```
+
+### `kcert-checker` not appearing as a Prometheus scrape target
+
+The `endpointslice` SD role does not expose `__meta_kubernetes_service_name`. The correct relabel source label is:
+
+```
+__meta_kubernetes_endpointslice_label_kubernetes_io_service_name
+```
+
+This is already correct in `alerts/prometheus-kcert-values.yaml`. If targets are missing, verify the config was applied:
+
+```bash
+kubectl port-forward -n monitoring svc/prometheus-server 9092:80 &
+curl -s http://localhost:9092/api/v1/status/config | \
+  python3 -c "import sys,json; print(json.load(sys.stdin)['data']['yaml'])" | grep -A30 kcert
+```
+
+Force a config reload without restarting Prometheus:
+
+```bash
+curl -s -XPOST http://localhost:9092/-/reload
+```
+
+### Integration tests find fewer certs than expected
+
+macOS LibreSSL generates EC certs with explicit curve parameters that Go's `crypto/x509` silently rejects. Regenerate the fixture certs:
+
+```bash
+make gen-test-certs
+```
 
 ---
 
 ## Two-repo architecture and syncing
 
-This is the **public canonical source**. A separate internal downstream repo imports it as a Go module and adds organisation-specific configuration (Dockerfile, Helm values, deploy pipelines). The two repos are kept in sync manually when changes land here.
+This is the **public canonical source**. A separate internal downstream repo imports it as a Go module and adds organisation-specific configuration (Dockerfile, Helm values, deploy pipelines).
 
 ### Relationship
 
@@ -307,47 +722,31 @@ require github.com/sirajudheenam/kcert-checker v0.0.0
 replace github.com/sirajudheenam/kcert-checker => ../../../github/sirajudheenam/kcert-checker
 ```
 
-This means the downstream builds directly against the local checkout of this repo — no vendoring or tagging needed during development. Remove the `replace` line and bump to a real tagged version when publishing a release.
+This means the downstream builds directly against the local checkout of this repo. Remove the `replace` line and bump to a real tagged version when publishing a release.
 
 ### What gets synced vs. what stays separate
 
-| Path | Synced to downstream? | Notes |
+| Path | Synced? | Notes |
 |---|---|---|
-| `cmd/`, `internal/`, `app/` | No — accessed via `replace` | Go source is shared at build time, not copied |
+| `cmd/`, `internal/`, `app/` | No | Shared at build time via `replace` directive |
 | `alerts/` | Yes | Prometheus rules are identical |
 | `deploy/gateway/` | Yes | Gateway API manifests |
 | `helm/kcert-checker/templates/` | Yes | Chart templates (values.yaml differs) |
 | `test-certs-deploy/` | Yes | Demo cert manifests |
 | `ui/` | Yes | Frontend (excluding node_modules/.next) |
 | `Dockerfile` | No | Downstream uses a different base image |
-| `helm/values.yaml` | No | Downstream has SAP-specific image registry and config |
+| `helm/values.yaml` | No | Downstream has org-specific image registry |
 | `config.yaml` | No | Downstream points to internal clusters |
-| `Makefile` | No | Downstream has SAP deploy targets |
+| `Makefile` | No | Downstream has org-specific deploy targets |
 
-### How to sync (from the downstream repo)
+### How to sync (run from the downstream repo)
 
 ```bash
-# Pull all non-Go changes from the public repo into the downstream
 cd ~/workdir/internal/cronus/kcert-checker
-make sync-from-public
-
-# Review what changed
-git diff
-
-# Commit and push
-git add -p
-git commit -m "sync: pull latest from public kcert-checker"
+make sync-from-public     # rsyncs non-Go assets from the public repo
+git diff                  # review what changed
+git add -p && git commit -m "sync: pull latest from public kcert-checker"
 git push
 ```
 
-`sync-from-public` warns if the public repo has uncommitted changes and skips SAP-specific files automatically.
-
-### When to sync
-
-Sync after any of these land in the public repo:
-- Changes to `alerts/` (Prometheus rules or alert thresholds)
-- Changes to `helm/kcert-checker/templates/` (new chart features)
-- UI changes in `ui/`
-- New test fixtures in `test-certs-deploy/`
-
-Go source changes (`cmd/`, `internal/`, `app/`) are picked up automatically at build time via the `replace` directive — no explicit sync step needed.
+Sync after changes to `alerts/`, `helm/templates/`, `ui/`, or `test-certs-deploy/`. Go source changes are picked up automatically — no sync needed.
