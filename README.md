@@ -22,8 +22,9 @@ A Kubernetes-native certificate expiry checker. Scans every running pod containe
 12. [Helm chart development](#helm-chart-development)
 13. [Configuration reference](#configuration-reference)
 14. [Makefile reference](#makefile-reference)
-15. [Troubleshooting](#troubleshooting)
-16. [Two-repo architecture and syncing](#two-repo-architecture-and-syncing)
+15. [Clean up](#clean-up)
+16. [Troubleshooting](#troubleshooting)
+17. [Two-repo architecture and syncing](#two-repo-architecture-and-syncing)
 
 ---
 
@@ -633,6 +634,51 @@ All targets, grouped by category. Summary:
 | Integration | `integration-test`, `integration-test-existing`, `integration-fixtures-up/down` |
 | Monitoring | `monitoring-stack`, `prometheus-up`, `grafana-up`, `perses-up`, `*-port-forward` |
 | Helm | `helm-lint`, `helm-template`, `helm-package`, `helm-release VERSION=x.y.z` |
+
+---
+
+## Clean up
+
+### Uninstall everything from the monitoring namespace
+
+```bash
+# 1. Remove demo / test resources
+kubectl delete pod kcert-test -n monitoring --ignore-not-found
+kubectl delete -f test-certs-deploy/ --ignore-not-found
+
+# 2. Uninstall kcert-checker
+#    If installed via Helm:
+helm uninstall kcert-checker -n monitoring
+#    If installed via raw kubectl manifests (no Helm release found):
+kubectl delete deployment,service,configmap/kcert-checker-config \
+  -n monitoring --ignore-not-found
+kubectl delete serviceaccount kcert-checker -n monitoring --ignore-not-found
+kubectl delete clusterrole,clusterrolebinding kcert-checker --ignore-not-found
+
+# 3. Uninstall monitoring stack (Grafana + Perses + Prometheus)
+make monitoring-stack-down
+# Or individually:
+helm uninstall grafana    -n monitoring --ignore-not-found
+helm uninstall perses     -n monitoring --ignore-not-found
+helm uninstall prometheus -n monitoring --ignore-not-found
+
+# 4. Remove leftover ConfigMaps / Secrets not owned by Helm
+kubectl delete configmap kcert-checker-dashboard perses-provisioning \
+  cert-script -n monitoring --ignore-not-found
+kubectl delete secret test-certificate -n monitoring --ignore-not-found
+```
+
+Verify everything is gone:
+```bash
+helm list -n monitoring                          # should be empty
+kubectl get all,configmap,secret -n monitoring   # only kube-root-ca.crt and default SA remain
+```
+
+### Delete the kind cluster entirely
+
+```bash
+kind delete cluster --name kind
+```
 
 ---
 
